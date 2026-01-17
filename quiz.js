@@ -1499,7 +1499,7 @@ function renderProgressDetail(){
       const status = skillGreen(profile, sid) ? "✅" : (st.n ? "🟡" : "⚪");
       const row = document.createElement("div");
       row.className = "row";
-      row.innerHTML = `<div>${status} <span class="muted">${sid}</span></div><div class="tag">${pct}%</div>`;
+      row.innerHTML = `<div>${status} <span class="muted">${labelSkill(sid)}</span></div><div class="tag">${pct}%</div>`;
       card.appendChild(row);
     }
     body.appendChild(card);
