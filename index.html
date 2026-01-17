@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Matematica – Monomi e Polinomi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+  <h1>Matematica – Algebra</h1>
+  <p class="subtitle">Monomi • Polinomi • MCD • MCM</p>
+
+  <button onclick="startQuiz()">Inizia allenamento</button>
+
+  <div id="quiz" class="hidden">
+    <div id="postit"></div>
+    <div id="question"></div>
+    <input id="answer" placeholder="Scrivi la risposta">
+    <button onclick="check()">Conferma</button>
+    <div id="feedback"></div>
+  </div>
+</div>
+
+<script src="quiz.js"></script>
+</body>
+</html>
