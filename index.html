@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Matematica - Algebra</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+  <meta name="theme-color" content="#1e3a8a" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar__inner">
+      <div class="brand">
+        <div class="brand__badge" aria-hidden="true">M</div>
+        <div>
+          <div class="brand__title">Matematica - Algebra</div>
+          <div class="brand__subtitle">Monomi e Polinomi (M1-M5)</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card" id="setup">
+      <h2>Benvenuto</h2>
+      <p class="muted">Allenamento: regola + esempio sempre. Verifica: senza aiuti.</p>
+
+      <div class="grid">
+        <label class="field">
+          <span>Modalita</span>
+          <select id="mode">
+            <option value="training" selected>Allenamento</option>
+            <option value="exam">Verifica</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Blocco</span>
+          <select id="block">
+            <option value="p0">P0 — Proporzioni (ponte)</option>
+            <option value="m1" selected>M1 — Monomi</option>
+            <option value="m2" id="optM2" disabled>M2 — Operazioni con monomi (bloccato)</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Domande</span>
+          <input id="count" type="number" min="5" max="38" value="20" />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="startBtn">Inizia</button>
+        <button class="btn" id="progressBtn">Progressi</button>
+      </div>
+
+      <details class="hint">
+        <summary>Formato risposte</summary>
+        <ul>
+          <li>Usa ^ per le potenze: 6x^5</li>
+          <li>Spazi non contano: 6 x^5 va bene</li>
+          <li>Puoi usare x,y,a,b dal tastierino</li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="card hidden" id="quiz">
+      <div class="quizHead">
+        <div>
+          <h2 id="quizTitle">Domanda</h2>
+          <p class="muted" id="meta"></p>
+        </div>
+        <div class="pill" id="scorePill">Punti: 0</div>
+      </div>
+
+      <div class="progress"><div class="progress__bar" id="progressBar"></div></div>
+
+      <div class="note" id="ruleBox">
+        <div class="note__title">Regola</div>
+        <div class="note__body" id="ruleText">...</div>
+        <div class="note__ex" id="ruleExample">...</div>
+      </div>
+
+      <div class="qbox">
+        <div class="qtext" id="qtext">...</div>
+
+        <div id="mcqWrap" class="choices"></div>
+
+        <div id="inputWrap" class="hidden">
+          <label class="field">
+            <span class="muted">Risposta</span>
+            <input id="answerInput" type="text" placeholder="es. 6x^5" autocomplete="off" />
+          </label>
+
+          <div class="keypad" id="keypad">
+            <button class="key" data-k="x">x</button>
+            <button class="key" data-k="y">y</button>
+            <button class="key" data-k="a">a</button>
+            <button class="key" data-k="b">b</button>
+            <button class="key" data-k="^">^</button>
+            <button class="key" data-k="+">+</button>
+            <button class="key" data-k="-">-</button>
+            <button class="key" data-k="2">2</button>
+            <button class="key" data-k="3">3</button>
+            <button class="key" data-k="4">4</button>
+            <button class="key" data-k="5">5</button>
+            <button class="key" data-k="6">6</button>
+            <button class="key wide" data-k="BKSP">Canc</button>
+            <button class="key wide" data-k="CLR">Pulisci</button>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" id="checkBtn">Conferma</button>
+          </div>
+        </div>
+
+        <div class="feedback" id="feedback"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="skipBtn">Salta</button>
+        <button class="btn primary" id="nextBtn" disabled>Avanti</button>
+        <button class="btn danger" id="restartBtn">Esci</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="result">
+      <h2>Risultato</h2>
+      <p id="resultText" class="big"></p>
+      <div class="actions">
+        <button id="backBtn" class="btn primary">Torna al menu</button>
+      </div>
+      <div id="weakness" class="review hidden"></div>
+    </section>
+
+    <section class="card hidden" id="progress">
+      <div class="quizHead">
+        <div>
+          <h2>Progressi</h2>
+          <p class="muted" id="progressHint">Vedi cosa hai consolidato e cosa manca per sbloccare i blocchi successivi.</p>
+        </div>
+        <div class="pill" id="badgeCount">Badge: 0</div>
+      </div>
+
+      <div id="path" class="path"></div>
+
+      <div class="cardSub" id="focusBox">
+        <div class="cardSub__title">Cosa fare adesso</div>
+        <div class="cardSub__body" id="nextAction">...</div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <h3 class="h3">Dettaglio competenze</h3>
+          <div id="skills" class="skills"></div>
+        </div>
+        <div>
+          <h3 class="h3">Badge ottenuti</h3>
+          <div id="badges" class="badges"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="progressBackBtn" class="btn primary">Torna al menu</button>
+      </div>
+    </section>
+
+    <!-- Regole sempre attive in Allenamento: nessun popup impostazioni -->
+
+    <footer class="footer muted">
+      <p>PWA pronta. Per ora: blocco M1 completo. Prossimi step: M2-M5.</p>
+    </footer>
+  </main>
+
+  <script src="quiz.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+    }
+  </script>
+</body>
+</html>
