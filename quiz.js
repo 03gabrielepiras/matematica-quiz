@@ -1,915 +1,1536 @@
-/* Step 13: adds M4 with guided steps and gating. */
-'use strict';
+/* =========================================================
+   MATEMATICA – ALGEBRA (P0 + M1..M5)
+   - P0 proporzioni (confronto frazioni + x nelle proporzioni)
+   - M1 monomi
+   - M2 operazioni monomi (GUIDATE)
+   - M3 polinomi
+   - M4 operazioni con polinomi (GUIDATE)
+   - M5 MCD/MCM monomi
+   - Prerequisiti: M2 sbloccato solo se M1 solido, ecc.
+   - Allenamento: regola+esempio sempre
+   - Verifica: senza aiuti
+   - Dashboard progressi + badge
+   ========================================================= */
 
-// ---------- helpers
-const $ = (id)=>document.getElementById(id);
-const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
-const now = ()=>Date.now();
-function pick(a){return a[Math.floor(Math.random()*a.length)];}
-function shuffle(a){const b=a.slice();for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;}
-function norm(s){return (s??'').toString().trim().toLowerCase().replace(/\s+/g,'');}
+"use strict";
 
-// --- math equivalence helpers (accept equivalent polynomials/monomials)
-// We keep user input easy (x^2) but compare in canonical form so 3x+4 == 4+3x.
-const superToDigit = {
-  '⁰':'0','¹':'1','²':'2','³':'3','⁴':'4','⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9'
+/* -------------------- Helpers DOM -------------------- */
+const $ = (id) => document.getElementById(id);
+const show = (id) => $(id).classList.remove("hidden");
+const hide = (id) => $(id).classList.add("hidden");
+
+/* -------------------- Storage -------------------- */
+const LS = {
+  name: "math_name",
+  profile: "math_profile_v1"
 };
 
-function superscriptsToCaret(s){
-  // Convert x²y¹⁰ -> x^2y^10
-  let out = '';
+function loadProfile(){
+  try {
+    const raw = localStorage.getItem(LS.profile);
+    if(!raw) return makeEmptyProfile();
+    const obj = JSON.parse(raw);
+    return mergeProfileDefaults(obj);
+  } catch {
+    return makeEmptyProfile();
+  }
+}
+function saveProfile(p){
+  localStorage.setItem(LS.profile, JSON.stringify(p));
+}
+
+function makeEmptyProfile(){
+  return {
+    // per competenza: array ultimi risultati (1/0), per streak
+    skills: {},
+    streak: 0,
+    badges: {},
+    lastBlock: "M1"
+  };
+}
+function mergeProfileDefaults(p){
+  const base = makeEmptyProfile();
+  // merge shallow
+  return {
+    ...base,
+    ...p,
+    skills: { ...base.skills, ...(p.skills||{}) },
+    badges: { ...base.badges, ...(p.badges||{}) }
+  };
+}
+
+/* -------------------- Toast -------------------- */
+let toastTimer = null;
+function toast(msg){
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>el.classList.add("hidden"), 2600);
+}
+
+/* -------------------- Math formatting -------------------- */
+function toSupDigit(ch){
+  const map = {"0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹","-":"⁻"};
+  return map[ch] || ch;
+}
+function formatExponents(s){
+  // turn x^2 into x² ; also handle a^10 etc
+  if(!s) return s;
+  return String(s).replace(/([a-zA-Z])\^(-?\d+)/g, (_,v,exp)=>{
+    return v + String(exp).split("").map(toSupDigit).join("");
+  });
+}
+function normalizeInput(s){
+  return String(s||"")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+/* -------------------- Algebra normalize (commutative) --------------------
+   We canonicalize simple polynomial expressions in x,y,a,b.
+   Supported forms: +/- terms like 6x^2y, 3x, -5, x^2, 2xy^3
+   Accept order differences: 3x+4 == 4+3x
+-------------------------------------------------------------------------- */
+
+const VARS = ["x","y","a","b"];
+
+function parseTerm(raw){
+  // raw without spaces, may start with +/-
+  // examples: "-3x^2y", "x", "2", "-x^3", "5xy^2"
+  let s = raw;
+  if(s === "") return null;
+
+  let sign = 1;
+  if(s[0] === "+"){ s = s.slice(1); }
+  else if(s[0] === "-"){ sign = -1; s = s.slice(1); }
+
+  // coefficient (leading number) or implied 1
+  let coefStr = "";
+  while(s.length && /[0-9]/.test(s[0])){
+    coefStr += s[0];
+    s = s.slice(1);
+  }
+  let coef = coefStr ? parseInt(coefStr,10) : 1;
+  coef *= sign;
+
+  // variables part
+  const exps = {x:0,y:0,a:0,b:0};
+  while(s.length){
+    const v = s[0];
+    if(!VARS.includes(v)) return null; // unsupported char
+    s = s.slice(1);
+    let exp = 1;
+    if(s[0] === "^"){
+      s = s.slice(1);
+      let num = "";
+      while(s.length && /[0-9]/.test(s[0])){ num += s[0]; s = s.slice(1); }
+      if(num === "") return null;
+      exp = parseInt(num,10);
+    }
+    exps[v] += exp;
+  }
+  return {coef, exps};
+}
+
+function termKey(exps){
+  // key like a^0|b^0|x^2|y^1 ordering stable
+  return VARS.map(v=>`${v}^${exps[v]||0}`).join("|");
+}
+
+function splitTopLevel(expr){
+  // split by + and - keeping signs, expr already normalized, no spaces
+  // convert leading term without sign to +term
+  if(!expr) return [];
+  let s = expr;
+  if(s[0] !== "+" && s[0] !== "-") s = "+" + s;
+
+  const parts = [];
+  let cur = "";
   for(let i=0;i<s.length;i++){
     const ch = s[i];
-    if(superToDigit[ch] !== undefined){
-      // gather run of superscripts
-      let j=i;
-      let digits='';
-      while(j<s.length && superToDigit[s[j]]!==undefined){
-        digits += superToDigit[s[j]];
-        j++;
-      }
-      out += '^' + digits;
-      i = j-1;
+    if((ch==="+" || ch==="-") && cur !== ""){
+      parts.push(cur);
+      cur = ch;
     } else {
-      out += ch;
+      cur += ch;
     }
   }
-  return out;
+  if(cur) parts.push(cur);
+  return parts;
 }
 
-function parsePoly(exprRaw){
-  if(!exprRaw) return null;
-  let s = exprRaw.toString().trim().toLowerCase();
-  s = s.replace(/−/g,'-').replace(/·/g,'*');
-  s = superscriptsToCaret(s);
-  s = s.replace(/\s+/g,'');
-  // reject complex syntax we don't support yet
-  if(/[()/:]/.test(s)) return null;
-  if(s==='') return null;
+function canonicalPoly(expr){
+  // returns map key->coefSum or null if parse fails
+  const s = normalizeInput(expr);
+  if(s === "") return null;
 
-  // Ensure leading sign
-  if(!/^[+-]/.test(s)) s = '+' + s;
-
-  const terms = new Map();
-  // Split into signed chunks: +... or -...
-  const parts = s.match(/[+-][^+-]+/g);
-  if(!parts) return null;
+  const parts = splitTopLevel(s);
+  const map = new Map();
 
   for(const p of parts){
-    const sign = p[0] === '-' ? -1 : 1;
-    const body = p.slice(1);
-    if(body==='') return null;
-
-    // coefficient: optional leading digits
-    const m = body.match(/^([0-9]+)(.*)$/);
-    let coeff = 1;
-    let rest = body;
-    if(m){
-      coeff = parseInt(m[1],10);
-      rest = m[2];
-    } else {
-      // if term has no letters, it's invalid here
-      coeff = (/[a-z]/.test(rest)) ? 1 : null;
-    }
-    if(coeff===null){
-      // pure constant like +4 handled by m; so here is invalid
-      return null;
-    }
-
-    // variables
-    const varRe = /([a-z])(?:\^([0-9]+))?/g;
-    let match;
-    const vars = new Map();
-    let consumed = '';
-    while((match = varRe.exec(rest))){
-      const v = match[1];
-      const e = match[2] ? parseInt(match[2],10) : 1;
-      vars.set(v, (vars.get(v) || 0) + e);
-      consumed += match[0];
-    }
-
-    // constants: rest should be empty
-    if(consumed !== rest){
-      // unsupported characters
-      return null;
-    }
-
-    // build canonical key
-    const key = [...vars.entries()]
-      .sort((a,b)=>a[0].localeCompare(b[0]))
-      .map(([v,e])=> e===1 ? v : `${v}^${e}`)
-      .join('');
-
-    const prev = terms.get(key) || 0;
-    terms.set(key, prev + sign*coeff);
+    const t = parseTerm(p);
+    if(!t) return null;
+    const key = termKey(t.exps);
+    map.set(key, (map.get(key)||0) + t.coef);
   }
-
   // remove zeros
-  for(const [k,v] of [...terms.entries()]){
-    if(v===0) terms.delete(k);
+  for(const [k,v] of map.entries()){
+    if(v === 0) map.delete(k);
   }
-  return terms;
+  return map;
 }
 
-function eqPoly(userRaw, expectedRaw){
-  const u = parsePoly(userRaw);
-  const e = parsePoly(expectedRaw);
-  if(!u || !e) return null; // unknown
-  if(u.size !== e.size) return false;
-  for(const [k,v] of e.entries()){
-    if(!u.has(k) || u.get(k)!==v) return false;
+function equalPoly(a,b){
+  const A = canonicalPoly(a);
+  const B = canonicalPoly(b);
+  if(!A || !B) return false;
+  if(A.size !== B.size) return false;
+  for(const [k,v] of A.entries()){
+    if((B.get(k)||0) !== v) return false;
   }
   return true;
 }
 
-// exponent pretty: turn x^2y^10 into x²y¹⁰ (simple)
-const supMap = {'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};
-function prettyExp(text){
-  // replace ^digits with superscript digits
-  return text.replace(/\^([0-9]+)/g, (_,d)=> d.split('').map(ch=>supMap[ch]||ch).join(''));
-}
-function renderMathInline(text){
-  // lightweight: just pretty exponents
-  return prettyExp(text);
+/* -------------------- Skills + mastery -------------------- */
+const WINDOW_N = 10;
+const THRESH = 0.8;
+const STREAK_REQ = 3;
+
+function pushSkill(profile, skillId, ok){
+  if(!profile.skills[skillId]) profile.skills[skillId] = [];
+  profile.skills[skillId].push(ok ? 1 : 0);
+  if(profile.skills[skillId].length > WINDOW_N) profile.skills[skillId].shift();
 }
 
-// ---------- persistence
-const STORE_KEY='matematica_profile_v14';
-function loadProfile(){
-  try{
-    const raw = localStorage.getItem(STORE_KEY);
-    if(!raw) return defaultProfile();
-    const obj = JSON.parse(raw);
-    return {...defaultProfile(), ...obj};
-  }catch{ return defaultProfile(); }
-}
-function saveProfile(p){ localStorage.setItem(STORE_KEY, JSON.stringify(p)); }
-function defaultProfile(){
-  return {
-    unlocked: { P0:true, M1:true, M2:false, M3:false, M4:false, M5:false, FIN:false },
-    // competency stats: key -> {recent:[0/1], streak:int}
-    stats: {},
-    badges: { P0:false, M1:false, M2:false, M3:false, M4:false, M5:false, FIN:false },
-    lastBlock: 'M1'
-  };
+function skillStats(profile, skillId){
+  const arr = profile.skills[skillId] || [];
+  const n = arr.length;
+  const sum = arr.reduce((a,b)=>a+b,0);
+  const pct = n ? (sum/n) : 0;
+  // streak within recent answers
+  let streak = 0;
+  for(let i=arr.length-1;i>=0;i--){
+    if(arr[i]===1) streak++;
+    else break;
+  }
+  return {n, pct, streak};
 }
 
-function statKey(block, comp){return `${block}:${comp}`;}
-function pushResult(profile, block, comp, ok){
-  const k = statKey(block, comp);
-  if(!profile.stats[k]) profile.stats[k]={recent:[], streak:0};
-  const s = profile.stats[k];
-  s.recent.push(ok?1:0);
-  if(s.recent.length>10) s.recent.shift();
-  s.streak = ok ? (s.streak+1) : 0;
-}
-function mastery(profile, block, comp){
-  const k = statKey(block, comp);
-  const s = profile.stats[k];
-  if(!s || s.recent.length<10) return {pct: (s?Math.round(100*s.recent.reduce((a,b)=>a+b,0)/Math.max(1,s.recent.length)):0), ok:false, streak:(s?s.streak:0), n:(s?s.recent.length:0)};
-  const sum = s.recent.reduce((a,b)=>a+b,0);
-  const pct = Math.round(100*sum/10);
-  const ok = pct>=80 && s.streak>=3;
-  return {pct, ok, streak:s.streak, n:10};
+function skillGreen(profile, skillId){
+  const {n, pct, streak} = skillStats(profile, skillId);
+  return n >= WINDOW_N && pct >= THRESH && streak >= STREAK_REQ;
 }
 
-// ---------- competency definitions
+function allGreen(profile, ids){
+  return ids.every(id => skillGreen(profile, id));
+}
+
+/* -------------------- Blocks & skills -------------------- */
 const BLOCKS = [
-  {id:'P0', name:'P0 • Proporzioni', comps:['C1','C2','C3','C4','C5','C6']},
-  {id:'M1', name:'M1 • Monomi', comps:['C1','C2','C3','C4','C5']},
-  {id:'M2', name:'M2 • Operazioni monomi', comps:['C6','C7','C8','C9','C10']},
-  {id:'M3', name:'M3 • Polinomi', comps:['C11','C12','C13','C14','C15']},
-  {id:'M4', name:'M4 • Operazioni polinomi', comps:['C16','C17','C18','C19','C20']},
-  {id:'M5', name:'M5 • MCD/MCM monomi', comps:['C21','C22','C23','C24','C25']},
-  {id:'FIN', name:'Verifica finale', comps:['F1']}
+  { id:"P0", name:"P0 Proporzioni", short:"P0", prereq:[], skills:["P0_C1","P0_C2","P0_C3","P0_C4","P0_C5","P0_C6"] },
+  { id:"M1", name:"M1 Monomi", short:"M1", prereq:[], skills:["M1_C1","M1_C2","M1_C3","M1_C4","M1_C5"] },
+  { id:"M2", name:"M2 Operazioni monomi", short:"M2", prereq:["M1"], skills:["M2_C6","M2_C7","M2_C8","M2_C9","M2_C10"] },
+  { id:"M3", name:"M3 Polinomi", short:"M3", prereq:["M1","M2"], skills:["M3_C11","M3_C12","M3_C13","M3_C14","M3_C15"] },
+  { id:"M4", name:"M4 Operazioni polinomi", short:"M4", prereq:["M1","M2","M3"], skills:["M4_C16","M4_C17","M4_C18","M4_C19","M4_C20"] },
+  { id:"M5", name:"M5 MCD/MCM", short:"M5", prereq:["M1","M2","M3","M4"], skills:["M5_C21","M5_C22","M5_C23","M5_C24","M5_C25"] },
 ];
 
-// gating: M2 requires all M1 comps; M3 requires M1+M2; M4 requires M1+M2+M3
-function updateUnlocks(profile){
-  const m1ok = BLOCKS.find(b=>b.id==='M1').comps.every(c=>mastery(profile,'M1',c).ok);
-  profile.unlocked.M2 = m1ok;
-  profile.badges.M1 = m1ok;
-  if(m1ok && profile.lastBlock==='M1') profile.lastBlock='M2';
+function blockById(id){ return BLOCKS.find(b=>b.id===id); }
 
-  const m2ok = profile.unlocked.M2 && BLOCKS.find(b=>b.id==='M2').comps.every(c=>mastery(profile,'M2',c).ok);
-  profile.unlocked.M3 = m1ok && m2ok;
-  profile.badges.M2 = m2ok;
-
-  const m3ok = profile.unlocked.M3 && BLOCKS.find(b=>b.id==='M3').comps.every(c=>mastery(profile,'M3',c).ok);
-  profile.unlocked.M4 = m1ok && m2ok && m3ok;
-  profile.badges.M3 = m3ok;
-
-  const m4ok = profile.unlocked.M4 && BLOCKS.find(b=>b.id==='M4').comps.every(c=>mastery(profile,'M4',c).ok);
-  profile.unlocked.M5 = m1ok && m2ok && m3ok && m4ok;
-  profile.badges.M4 = m4ok;
-
-  const m5ok = profile.unlocked.M5 && BLOCKS.find(b=>b.id==='M5').comps.every(c=>mastery(profile,'M5',c).ok);
-  profile.badges.M5 = m5ok;
-
-  profile.unlocked.FIN = m5ok;
-  profile.badges.FIN = m5ok;
-}
-
-// ---------- questions
-// Question types: mcq {type:'mcq', block, comp, q, choices, a, rule}
-// open {type:'open', block, comp, q, a, rule, explainWrong(user)->string}
-// guided {type:'guided', block, comp, steps:[subquestions], rule}
-
-function ruleBox(title, rule, ex){
-  return `${title}\n• ${rule}\nEsempio: ${ex}`;
-}
-
-// Minimal banks (enough to demonstrate; user will expand later)
-const BANK = [];
-
-// --- M1 sample (kept)
-function addM1(){
-  BANK.push({
-    type:'open', block:'M1', comp:'C2',
-    q:'Qual è il coefficiente di -3x^2?',
-    a:'-3',
-    rule: ruleBox('Coefficiente','È solo il numero (con segno) davanti alla parte letterale.','In -3x^2 il coefficiente è -3.'),
-    explainWrong:(u)=>`Hai scritto ${u||'(vuoto)'}. Il coefficiente NON include la lettera. In -3x^2: coefficiente = -3, parte letterale = x^2.`
-  });
-  BANK.push({
-    type:'open', block:'M1', comp:'C4',
-    q:'Calcola il grado del monomio 5x^3y^2',
-    a:'5',
-    rule: ruleBox('Grado totale','Somma gli esponenti delle lettere.','5x^3y^2 ha grado 3+2=5.'),
-    explainWrong:(u)=>`Il grado è la somma degli esponenti (3+2). Il numero 5 non influisce sul grado.`
-  });
-  BANK.push({
-    type:'mcq', block:'M1', comp:'C1',
-    q:'Quale è un monomio?',
-    choices:['2x+3','5x^2y','x/y'],
-    a:1,
-    rule: ruleBox('Monomio','È un numero moltiplicato per lettere con esponenti naturali.','5x^2y è un monomio.')
-  });
-}
-
-// --- P0 tiny sample
-function addP0(){
-  // Helper: build a fraction-compare MCQ using correct cross-multiplication.
-  function fracCmpQ(a,b,c,d){
-    const left = a*d;
-    const right = b*c;
-    let ans;
-    if(left>right) ans = 0;
-    else if(left<right) ans = 1;
-    else ans = 2;
-    return {
-      type:'mcq', block:'P0', comp:'C1',
-      q:'Quale frazione è maggiore?',
-      choices:[`${a}/${b}`,`${c}/${d}`,'Sono uguali'],
-      a:ans,
-      rule: ruleBox(
-        'Confronto frazioni (incrocio)',
-        'Confronta a·d e b·c (prodotto incrociato).',
-        `${a}·${d}=${a*d} e ${b}·${c}=${b*c} ⇒ ${ans===2?'sono uguali':(ans===0?`${a}/${b}`:`${c}/${d}`)} è maggiore.`
-      )
-    };
+function blockUnlocked(profile, id){
+  const b = blockById(id);
+  if(!b) return false;
+  // prereq blocks must be completed (all skills green)
+  for(const pre of b.prereq){
+    const pb = blockById(pre);
+    if(!pb) return false;
+    if(!allGreen(profile, pb.skills)) return false;
   }
-
-  // A small, high-quality set of comparisons (includes the ones you reported).
-  BANK.push(fracCmpQ(3,4,5,6));
-  BANK.push(fracCmpQ(7,10,2,3));
-  BANK.push(fracCmpQ(5,8,3,6));
-  BANK.push(fracCmpQ(4,9,2,5));
-  BANK.push(fracCmpQ(3,7,6,14)); // equal
-
-  BANK.push({
-    type:'open', block:'P0', comp:'C5',
-    q:'Trova x: (x-2):5 = 6:10 (scrivi solo x)',
-    a:'5',
-    rule: ruleBox('Proporzione','Prodotto dei medi = prodotto degli estremi.','(x-2)*10 = 5*6 ⇒ 10x-20=30 ⇒ x=5.'),
-    explainWrong:(u)=>`Usa il prodotto incrociato: (x-2)*10 = 5*6 = 30. Poi risolvi: 10x-20=30 ⇒ 10x=50 ⇒ x=5.`
-  });
+  return true;
 }
 
-// --- M2 guided (already implemented in Step10):
-function addM2(){
-  // guided product
-  BANK.push({
-    type:'guided', block:'M2', comp:'C6',
-    rule: ruleBox('Prodotto tra monomi','Moltiplica i coefficienti e somma gli esponenti della stessa lettera.','(2x^2)(3x^3)=6x^5'),
-    steps:[
-      {type:'mcq', q:'Che operazione è? (2x^2)(3x^3)', choices:['Prodotto','Divisione','Potenza'], a:0, comp:'C10'},
-      {type:'open', q:'Calcola il coefficiente: 2·3 =', a:'6'},
-      {type:'mcq', q:'Con gli esponenti di x cosa fai nel prodotto?', choices:['Sommo','Sottraggo','Moltiplico'], a:0},
-      {type:'open', q:'Scrivi il risultato finale (formato: 6x^5)', a:'6x^5'},
-      {type:'mcq', q:'Perché hai sommato gli esponenti?', choices:['Perché è un prodotto tra potenze con stessa base','Perché è una divisione','Perché è una potenza'], a:0}
-    ]
-  });
-
-  BANK.push({
-    type:'guided', block:'M2', comp:'C7',
-    rule: ruleBox('Divisione tra monomi','Dividi i coefficienti e sottrai gli esponenti della stessa lettera.','6x^5 / 2x^3 = 3x^2'),
-    steps:[
-      {type:'mcq', q:'Che operazione è? (6x^5):(2x^3)', choices:['Prodotto','Divisione','Potenza'], a:1, comp:'C10'},
-      {type:'open', q:'Calcola il coefficiente: 6:2 =', a:'3'},
-      {type:'mcq', q:'Con gli esponenti di x cosa fai nella divisione?', choices:['Sommo','Sottraggo','Moltiplico'], a:1},
-      {type:'open', q:'Scrivi il risultato finale (formato: 3x^2)', a:'3x^2'},
-      {type:'mcq', q:'Perché sottrai gli esponenti?', choices:['Perché è una divisione tra potenze con stessa base','Perché è un prodotto','Perché è una potenza'], a:0}
-    ]
-  });
+function blockCompleted(profile, id){
+  const b = blockById(id);
+  if(!b) return false;
+  return allGreen(profile, b.skills);
 }
 
-// --- M3 small bank
-function addM3(){
-  BANK.push({
-    type:'mcq', block:'M3', comp:'C13',
-    q:'Quali sono termini simili?',
-    choices:['2x^2 e 5x^2','3x e 3x^2','x^2 e y^2'],
-    a:0,
-    rule: ruleBox('Termini simili','Stessa parte letterale con stessi esponenti.','2x^2 e 5x^2 sono simili.')
-  });
-  BANK.push({
-    type:'open', block:'M3', comp:'C14',
-    q:'Riduci: 2x + 3x',
-    a:'5x',
-    rule: ruleBox('Riduzione','Somma i coefficienti dei termini simili.','2x+3x=5x.'),
-    explainWrong:(u)=>`I termini sono simili (entrambi x). Sommi i coefficienti: 2+3=5 ⇒ 5x.`
-  });
-  BANK.push({
-    type:'open', block:'M3', comp:'C15',
-    q:'Grado di: 4x^3 - 2x + 1 (scrivi solo il grado)',
-    a:'3',
-    rule: ruleBox('Grado polinomio','È il grado massimo tra i monomi.','4x^3 ha grado 3 ⇒ polinomio di grado 3.'),
-    explainWrong:(u)=>`Il grado del polinomio è il massimo tra i gradi dei monomi: 4x^3 (3), -2x (1), 1 (0) ⇒ 3.`
-  });
+/* -------------------- Question model --------------------
+   types:
+   - mcq: choices + answerIndex
+   - open: answer string or checker function
+   - guided: steps array, each step mcq/open, and final skill mapping
+---------------------------------------------------------- */
+
+function qMCQ({block, skill, prompt, choices, answerIndex, rule, example, explainOk, explainNo}){
+  return {type:"mcq", block, skill, prompt, choices, answerIndex, rule, example, explainOk, explainNo};
+}
+function qOPEN({block, skill, prompt, answer, checker, rule, example, explainOk, explainNo}){
+  return {type:"open", block, skill, prompt, answer, checker, rule, example, explainOk, explainNo};
+}
+function qGUIDED({block, skills, title, steps, rule, example}){
+  return {type:"guided", block, skills, title, steps, rule, example};
 }
 
-// --- Step 13: M4 guided + normal
-function addM4(){
-  // C16 sum
-  BANK.push({
-    type:'open', block:'M4', comp:'C16',
-    q:'Somma: (2x+3) + (x+1) =',
-    a:'3x+4',
-    rule: ruleBox('Somma polinomi','Togli parentesi e riduci termini simili.','(2x+3)+(x+1)=3x+4.'),
-    explainWrong:(u)=>`Togli le parentesi (nessun cambio segno): 2x+3+x+1. Riduci: (2x+x)=3x e (3+1)=4 ⇒ 3x+4.`
-  });
+/* -------------------- P0 Questions -------------------- */
+function fracCompare(a,b,c,d){
+  // returns 1 if a/b > c/d, -1 if <, 0 if equal
+  const left = a*d;
+  const right = b*c;
+  if(left>right) return 1;
+  if(left<right) return -1;
+  return 0;
+}
 
-  // C17 difference
-  BANK.push({
-    type:'open', block:'M4', comp:'C17',
-    q:'Differenza: (5x-3) - (2x-1) =',
-    a:'3x-2',
-    rule: ruleBox('Differenza polinomi','Cambia segno a tutti i termini del secondo polinomio, poi riduci.','(5x-3)-(2x-1)=5x-3-2x+1=3x-2.'),
-    explainWrong:(u)=>`Distribuisci il meno: -(2x-1) = -2x+1. Quindi 5x-3-2x+1 = 3x-2.`
-  });
-
-  // C18 distributive guided
-  BANK.push({
-    type:'guided', block:'M4', comp:'C18',
-    rule: ruleBox('Distributiva','Monomio per ogni termine del polinomio.','2x(3x+1)=6x^2+2x'),
-    steps:[
-      {type:'mcq', q:'Quale regola usi per 2x(3x+1)?', choices:['Distributiva','Somma diretta','MCD'], a:0, comp:'C20'},
-      {type:'open', q:'Primo prodotto: 2x·3x =', a:'6x^2'},
-      {type:'open', q:'Secondo prodotto: 2x·1 =', a:'2x'},
-      {type:'open', q:'Somma i risultati: 6x^2 + 2x =', a:'6x^2+2x'},
-      {type:'mcq', q:'Perché fai due prodotti?', choices:['Perché moltiplichi per ogni termine','Perché cambi segno','Perché sommi esponenti a caso'], a:0}
-    ]
-  });
-
-  // C19 binomial guided
-  BANK.push({
-    type:'guided', block:'M4', comp:'C19',
-    rule: ruleBox('Binomio×binomio','Ogni termine del primo per ogni termine del secondo (4 prodotti), poi riduci.','(x+2)(x+3)=x^2+5x+6'),
-    steps:[
-      {type:'mcq', q:'Quanti prodotti devi fare in (x+2)(x+3)?', choices:['2','3','4'], a:2, comp:'C20'},
-      {type:'open', q:'1) x·x =', a:'x^2'},
-      {type:'open', q:'2) x·3 =', a:'3x'},
-      {type:'open', q:'3) 2·x =', a:'2x'},
-      {type:'open', q:'4) 2·3 =', a:'6'},
-      {type:'open', q:'Riduci: x^2 + 3x + 2x + 6 =', a:'x^2+5x+6'}
-    ]
-  });
-
-  // C20 order of steps
-  BANK.push({
-    type:'mcq', block:'M4', comp:'C20',
-    q:'Qual è l’ordine corretto nei prodotti con parentesi?',
+const P0_QUESTIONS = [
+  // C1 compare fractions (including user reported cases)
+  qMCQ({
+    block:"P0", skill:"P0_C1",
+    prompt:"Quale frazione è più grande?",
+    choices:["7/10","2/3"],
+    answerIndex:0,
+    rule:"Per confrontare a/b e c/d usa il prodotto incrociato: confronta a·d e b·c.",
+    example:"Esempio: 3/4 vs 5/6 → 3·6=18 e 4·5=20 → 5/6 è maggiore.",
+    explainOk:"Bravo: 7·3=21 e 10·2=20 → 21>20 quindi 7/10 è maggiore.",
+    explainNo:"Usa l’incrocio: 7·3=21 e 10·2=20. Il maggiore è quello col prodotto più grande: 7/10."
+  }),
+  qMCQ({
+    block:"P0", skill:"P0_C1",
+    prompt:"Quale frazione è più grande?",
+    choices:["5/8","3/6"],
+    answerIndex:0,
+    rule:"Confronto frazioni: confronta 5·6 e 8·3.",
+    example:"Esempio: 2/5 vs 3/7 → 2·7=14 e 5·3=15 → 3/7 è maggiore.",
+    explainOk:"Bravo: 5·6=30 e 8·3=24 → 30>24 quindi 5/8 è maggiore.",
+    explainNo:"Incrocio: 5·6=30 e 8·3=24 → 5/8 è maggiore."
+  }),
+  // C2 recognize proportion
+  qMCQ({
+    block:"P0", skill:"P0_C2",
+    prompt:"Quale è una proporzione?",
+    choices:["2:5 = 6:15","2+5 = 6+15","2:5 = 6+15","(2/5) + (6/15)"],
+    answerIndex:0,
+    rule:"Una proporzione ha forma a:b = c:d e significa a/b = c/d.",
+    example:"Esempio: 3:4 = 6:8 (perché 3/4 = 6/8).",
+    explainOk:"Corretto: è della forma a:b=c:d.",
+    explainNo:"Una proporzione è a:b=c:d (rapporto uguale a rapporto)."
+  }),
+  // C3 medi/extremes
+  qMCQ({
+    block:"P0", skill:"P0_C3",
+    prompt:"In a:b = c:d, quali sono i medi?",
+    choices:["a e d","b e c","a e b","c e d"],
+    answerIndex:1,
+    rule:"Medi: b e c. Estremi: a e d.",
+    example:"In 2:5 = 6:15, medi sono 5 e 6.",
+    explainOk:"Esatto: i medi sono b e c.",
+    explainNo:"Ricorda: medi = b e c; estremi = a e d."
+  }),
+  // C4 solve simple x
+  qOPEN({
+    block:"P0", skill:"P0_C4",
+    prompt:"Risolvi la proporzione: x : 5 = 6 : 10. Trova x.",
+    answer:"3",
+    rule:"Prodotto incrociato: x·10 = 5·6. Poi dividi per 10.",
+    example:"10x=30 → x=3.",
+    explainOk:"Perfetto: x=3.",
+    explainNo:"Metodo: x·10=5·6=30 → x=30/10=3."
+  }),
+  // C5 solve with expression
+  qOPEN({
+    block:"P0", skill:"P0_C5",
+    prompt:"Risolvi: (x-2) : 5 = 6 : 10. Trova x.",
+    checker:(u)=>{
+      const s = normalizeInput(u);
+      return s==="5";
+    },
+    rule:"Incrocio: (x-2)·10 = 5·6. Poi risolvi 10(x-2)=30.",
+    example:"10x-20=30 → 10x=50 → x=5.",
+    explainOk:"Corretto: x=5.",
+    explainNo:"10(x-2)=30 → 10x-20=30 → 10x=50 → x=5."
+  }),
+  // C6 check result
+  qMCQ({
+    block:"P0", skill:"P0_C6",
+    prompt:"Per controllare una proporzione risolta, cosa fai?",
     choices:[
-      'Riduci subito, poi moltiplica',
-      'Moltiplica (tutti i prodotti), poi riduci',
-      'Scegli a caso'
+      "Sommo tutti i termini",
+      "Sostituisco x e verifico che i rapporti siano uguali",
+      "Moltiplico solo i numeri",
+      "Confronto i denominatori"
     ],
-    a:1,
-    rule: ruleBox('Ordine passaggi','Prima prodotti, poi riduzione.','(x+2)(x+3): fai 4 prodotti, poi riduci i termini simili.')
+    answerIndex:1,
+    rule:"Controllo: sostituisci il valore trovato e verifica a/b = c/d.",
+    example:"Se x=3 in x:5=6:10 → 3/5 = 6/10 (vero).",
+    explainOk:"Esatto: si controlla sostituendo x.",
+    explainNo:"Il controllo corretto è sostituire x e vedere se i due rapporti coincidono."
+  })
+];
+
+/* -------------------- M1 Questions -------------------- */
+const M1_QUESTIONS = [
+  // C1 recognize monomial
+  qMCQ({
+    block:"M1", skill:"M1_C1",
+    prompt:"Quale è un monomio?",
+    choices:["2x+3","5x^2y","x/y","x+y"],
+    answerIndex:1,
+    rule:"Un monomio è un numero per lettere con esponenti naturali (senza somme).",
+    example:"-3x^2y è un monomio; 2x+3 è un polinomio.",
+    explainOk:"Corretto: 5x²y è un monomio.",
+    explainNo:"Un monomio non contiene + o -. 5x²y è un unico prodotto."
+  }),
+  qMCQ({
+    block:"M1", skill:"M1_C1",
+    prompt:"Vero o falso: 8 è un monomio.",
+    choices:["Vero","Falso"],
+    answerIndex:0,
+    rule:"Un numero (senza lettere) è un monomio di grado 0.",
+    example:"8 = 8·x^0.",
+    explainOk:"Esatto: è un monomio di grado 0.",
+    explainNo:"È vero: un numero è un monomio (grado 0)."
+  }),
+  // C2 coefficient
+  qOPEN({
+    block:"M1", skill:"M1_C2",
+    prompt:"Qual è il coefficiente del monomio -3x^2y?",
+    answer:"-3",
+    rule:"Il coefficiente è SOLO il numero davanti alle lettere (con segno).",
+    example:"-3x²y → coefficiente = -3.",
+    explainOk:"Perfetto: coefficiente -3.",
+    explainNo:"Il coefficiente è solo il numero: -3 (non include x o y)."
+  }),
+  qOPEN({
+    block:"M1", skill:"M1_C2",
+    prompt:"Qual è il coefficiente del monomio -x^2?",
+    answer:"-1",
+    rule:"Se non c’è numero scritto, il coefficiente è 1 (o -1 se c’è il meno).",
+    example:"-x² = -1·x².",
+    explainOk:"Esatto: -1.",
+    explainNo:"-x² significa -1·x², quindi coefficiente -1."
+  }),
+  // C3 literal part
+  qOPEN({
+    block:"M1", skill:"M1_C3",
+    prompt:"Scrivi la parte letterale di 4x^2y (solo lettere ed esponenti).",
+    answer:"x^2y",
+    checker:(u)=>{
+      const s = normalizeInput(u);
+      return s==="x^2y" || s==="yx^2";
+    },
+    rule:"Parte letterale = solo lettere con esponenti (senza numero).",
+    example:"4x²y → parte letterale = x²y.",
+    explainOk:"Corretto: x²y.",
+    explainNo:"Devi scrivere solo lettere: x²y (senza 4)."
+  }),
+  // C4 total degree
+  qOPEN({
+    block:"M1", skill:"M1_C4",
+    prompt:"Qual è il grado del monomio 5x^3y^2?",
+    answer:"5",
+    rule:"Grado totale = somma degli esponenti: 3+2.",
+    example:"5x³y² → grado = 5.",
+    explainOk:"Bravo: 5.",
+    explainNo:"Somma esponenti: 3+2=5."
+  }),
+  qOPEN({
+    block:"M1", skill:"M1_C4",
+    prompt:"Qual è il grado del monomio 9?",
+    answer:"0",
+    rule:"Un numero ha grado 0 (nessuna lettera).",
+    example:"9 = 9·x^0.",
+    explainOk:"Esatto: 0.",
+    explainNo:"È un numero → grado 0."
+  }),
+  // C5 degree w.r.t letter
+  qOPEN({
+    block:"M1", skill:"M1_C5",
+    prompt:"In 6x^3y^2, qual è il grado rispetto a x?",
+    answer:"3",
+    rule:"Grado rispetto a una lettera = suo esponente.",
+    example:"6x³y² → grado in x = 3.",
+    explainOk:"Corretto: 3.",
+    explainNo:"L’esponente di x è 3."
+  }),
+  qOPEN({
+    block:"M1", skill:"M1_C5",
+    prompt:"In 6x^3y^2, qual è il grado rispetto a y?",
+    answer:"2",
+    rule:"Grado rispetto a y = esponente di y.",
+    example:"… → grado in y = 2.",
+    explainOk:"Corretto: 2.",
+    explainNo:"L’esponente di y è 2."
+  })
+];
+
+/* -------------------- M2 Guided Questions -------------------- */
+function guidedProductExample(){
+  // (2x^2)(3x^3) -> 6x^5
+  return qGUIDED({
+    block:"M2",
+    skills:["M2_C10","M2_C6","M2_C9"],
+    title:"Esegui: (2x^2)(3x^3)",
+    rule:"Prodotto tra monomi: moltiplica coefficienti e SOMMA gli esponenti della stessa lettera.",
+    example:"(2x²)(3x³) = 6x^(2+3)=6x⁵",
+    steps:[
+      qMCQ({
+        block:"M2", skill:"M2_C10",
+        prompt:"Che operazione è?",
+        choices:["Prodotto","Divisione","Potenza"],
+        answerIndex:0,
+        rule:"Riconosci l’operazione prima di calcolare.",
+        example:"(…)(…) è un prodotto."
+      }),
+      qOPEN({
+        block:"M2", skill:"M2_C6",
+        prompt:"Calcola il coefficiente: 2·3 = ?",
+        answer:"6",
+        rule:"Nel prodotto si moltiplicano i coefficienti.",
+        example:"2·3=6."
+      }),
+      qMCQ({
+        block:"M2", skill:"M2_C6",
+        prompt:"Cosa fai con gli esponenti di x nel prodotto?",
+        choices:["Li sommo","Li sottraggo","Li moltiplico"],
+        answerIndex:0,
+        rule:"Nel prodotto tra potenze con stessa base: sommi gli esponenti.",
+        example:"x^2·x^3=x^(2+3)."
+      }),
+      qOPEN({
+        block:"M2", skill:"M2_C6",
+        prompt:"Scrivi il risultato finale (usa ^ per gli esponenti se vuoi):",
+        checker:(u)=> equalPoly(u, "6x^5"),
+        rule:"Unisci coefficiente e parte letterale.",
+        example:"6x^5"
+      }),
+      qMCQ({
+        block:"M2", skill:"M2_C10",
+        prompt:"Perché hai sommato gli esponenti?",
+        choices:["Perché è una divisione","Perché è un prodotto con stessa base","Perché è una potenza"],
+        answerIndex:1,
+        rule:"Regola: nel prodotto tra monomi con stessa lettera si sommano esponenti.",
+        example:"x^a·x^b=x^(a+b)."
+      })
+    ]
   });
 }
 
-
-// --- Step 14: M5 bank (MCD/MCM tra monomi)
-function addM5(){
-  BANK.push({
-    type:'mcq', block:'M5', comp:'C21',
-    q:'Quale regola è corretta?',
-    choices:['Nel MCD prendo gli esponenti maggiori','Nel MCD prendo gli esponenti minori','Nel MCM prendo gli esponenti minori'],
-    a:1,
-    rule: ruleBox('MCD/MCM','MCD: esponenti minori delle lettere comuni. MCM: esponenti maggiori di tutte le lettere.','Esempio: MCD(6x^3,4x^2)=2x^2.')
-  });
-  BANK.push({
-    type:'guided', block:'M5', comp:'C25',
-    rule: ruleBox('Procedura MCD','1) MCD coefficienti  2) lettere comuni  3) esponenti minori','Esempio: 6x^3y^2 e 4x^2y ⇒ 2x^2y'),
+function guidedDivisionExample(){
+  // 6x^5 / 2x^3 -> 3x^2
+  return qGUIDED({
+    block:"M2",
+    skills:["M2_C10","M2_C7","M2_C9"],
+    title:"Esegui: (6x^5) / (2x^3)",
+    rule:"Divisione tra monomi: dividi i coefficienti e SOTTRAI gli esponenti della stessa lettera.",
+    example:"6x⁵ / 2x³ = 3x^(5-3)=3x²",
     steps:[
-      {type:'open', q:'MCD dei coefficienti: MCD(6,4)=', a:'2'},
-      {type:'mcq', q:'Quali lettere sono comuni in 6x^3y^2 e 4x^2y?', choices:['x e y','solo x','solo y','nessuna'], a:0},
-      {type:'open', q:'Esponente minore di x tra 3 e 2 =', a:'2'},
-      {type:'open', q:'Esponente minore di y tra 2 e 1 =', a:'1'},
-      {type:'open', q:'Scrivi il MCD finale (formato: 2x^2y)', a:'2x^2y'}
+      qMCQ({
+        block:"M2", skill:"M2_C10",
+        prompt:"Che operazione è?",
+        choices:["Prodotto","Divisione","Potenza"],
+        answerIndex:1,
+        rule:"Il simbolo / indica divisione.",
+        example:"a/b è una divisione."
+      }),
+      qOPEN({
+        block:"M2", skill:"M2_C7",
+        prompt:"Calcola il coefficiente: 6 ÷ 2 = ?",
+        answer:"3",
+        rule:"Nella divisione dividi i coefficienti.",
+        example:"6/2=3."
+      }),
+      qMCQ({
+        block:"M2", skill:"M2_C7",
+        prompt:"Cosa fai con gli esponenti di x nella divisione?",
+        choices:["Li sommo","Li sottraggo","Li moltiplico"],
+        answerIndex:1,
+        rule:"Nella divisione: x^a / x^b = x^(a-b).",
+        example:"x^5 / x^3 = x^2."
+      }),
+      qOPEN({
+        block:"M2", skill:"M2_C7",
+        prompt:"Scrivi il risultato finale:",
+        checker:(u)=> equalPoly(u, "3x^2"),
+        rule:"Unisci coefficiente e potenza.",
+        example:"3x^2"
+      }),
+      qMCQ({
+        block:"M2", skill:"M2_C10",
+        prompt:"Perché hai sottratto gli esponenti?",
+        choices:["Perché è una divisione con stessa base","Perché è un prodotto","Perché è una potenza"],
+        answerIndex:0,
+        rule:"Regola: divisione tra potenze con stessa base → sottrai.",
+        example:"x^a/x^b = x^(a-b)."
+      })
     ]
-  });
-  BANK.push({
-    type:'guided', block:'M5', comp:'C24',
-    rule: ruleBox('Procedura MCM','1) MCM coefficienti  2) tutte le lettere  3) esponenti maggiori','Esempio: 6x^3y^2 e 4x^2y ⇒ 12x^3y^2'),
-    steps:[
-      {type:'open', q:'MCM dei coefficienti: MCM(6,4)=', a:'12'},
-      {type:'mcq', q:'Nel MCM prendo le lettere…', choices:['solo comuni','tutte','nessuna'], a:1},
-      {type:'open', q:'Esponente maggiore di x tra 3 e 2 =', a:'3'},
-      {type:'open', q:'Esponente maggiore di y tra 2 e 1 =', a:'2'},
-      {type:'open', q:'Scrivi il MCM finale (formato: 12x^3y^2)', a:'12x^3y^2'}
-    ]
-  });
-  BANK.push({
-    type:'open', block:'M5', comp:'C22',
-    q:'Calcola MCD tra 12x^2 e 8x^2 =',
-    a:'4x^2',
-    rule: ruleBox('MCD','MCD coefficienti + lettere comuni + esponenti minori.','MCD(12,8)=4 e x^2 comune ⇒ 4x^2.'),
-    explainWrong:(u)=>'MCD(12,8)=4. Le lettere comuni: x^2. Quindi MCD=4x^2.'
-  });
-  BANK.push({
-    type:'open', block:'M5', comp:'C23',
-    q:'Calcola MCM tra 4x e 6x =',
-    a:'12x',
-    rule: ruleBox('MCM','MCM coefficienti + tutte le lettere + esponenti maggiori.','MCM(4,6)=12 e x comune ⇒ 12x.'),
-    explainWrong:(u)=>'MCM(4,6)=12. Lettere: x. Esponente maggiore: 1. Quindi MCM=12x.'
   });
 }
-addP0();
-addM1();
-addM2();
-addM3();
-addM4();
-addM5();
 
-// ---------- UI state
+function guidedPowerExample(){
+  // (2x^3)^2 -> 4x^6
+  return qGUIDED({
+    block:"M2",
+    skills:["M2_C10","M2_C8","M2_C9"],
+    title:"Esegui: (2x^3)^2",
+    rule:"Potenza di monomio: eleva il coefficiente e MOLTIPLICA gli esponenti.",
+    example:"(2x³)² = 2² · x^(3·2) = 4x⁶",
+    steps:[
+      qMCQ({
+        block:"M2", skill:"M2_C10",
+        prompt:"Che operazione è?",
+        choices:["Prodotto","Divisione","Potenza"],
+        answerIndex:2,
+        rule:"L’esponente esterno indica una potenza.",
+        example:"(… )^n è una potenza."
+      }),
+      qOPEN({
+        block:"M2", skill:"M2_C8",
+        prompt:"Calcola il coefficiente: 2^2 = ?",
+        answer:"4",
+        rule:"Nella potenza elevi anche il coefficiente.",
+        example:"2^2=4."
+      }),
+      qMCQ({
+        block:"M2", skill:"M2_C8",
+        prompt:"Cosa fai con gli esponenti di x in (x^3)^2 ?",
+        choices:["Li sommo","Li sottraggo","Li moltiplico"],
+        answerIndex:2,
+        rule:"(x^a)^b = x^(a·b).",
+        example:"(x^3)^2 = x^6."
+      }),
+      qOPEN({
+        block:"M2", skill:"M2_C8",
+        prompt:"Scrivi il risultato finale:",
+        checker:(u)=> equalPoly(u, "4x^6"),
+        rule:"Unisci coefficiente e potenza.",
+        example:"4x^6"
+      }),
+      qMCQ({
+        block:"M2", skill:"M2_C10",
+        prompt:"Perché hai moltiplicato gli esponenti?",
+        choices:["Perché è una potenza di potenza","Perché è un prodotto","Perché è una divisione"],
+        answerIndex:0,
+        rule:"Regola: (x^a)^b = x^(a·b).",
+        example:"(x^3)^2 = x^6."
+      })
+    ]
+  });
+}
+
+const M2_QUESTIONS = [
+  guidedProductExample(),
+  guidedDivisionExample(),
+  guidedPowerExample()
+];
+
+/* -------------------- M3 Questions -------------------- */
+const M3_QUESTIONS = [
+  qMCQ({
+    block:"M3", skill:"M3_C11",
+    prompt:"Quale è un polinomio?",
+    choices:["3x^2-2x+1","x/y","x^x","√x"],
+    answerIndex:0,
+    rule:"Un polinomio è somma/differenza di monomi con esponenti naturali.",
+    example:"3x²-2x+1 è un polinomio.",
+    explainOk:"Corretto.",
+    explainNo:"Solo 3x²-2x+1 è una somma/differenza di monomi."
+  }),
+  qMCQ({
+    block:"M3", skill:"M3_C12",
+    prompt:"Il polinomio 5x-3 è un…",
+    choices:["Monomio","Binomio","Trinomio"],
+    answerIndex:1,
+    rule:"Binomio = 2 termini.",
+    example:"5x e -3 → 2 termini."
+  }),
+  qMCQ({
+    block:"M3", skill:"M3_C13",
+    prompt:"Quali sono termini simili?",
+    choices:["2x^2 e 5x^2","3x e 3x^2","x e y","2xy e 2x"],
+    answerIndex:0,
+    rule:"Termini simili: stessa parte letterale (stesse lettere e esponenti).",
+    example:"2x² e 5x² sono simili."
+  }),
+  qOPEN({
+    block:"M3", skill:"M3_C14",
+    prompt:"Riduci: 2x + 3x",
+    checker:(u)=> equalPoly(u, "5x"),
+    rule:"Riduci solo termini simili sommando i coefficienti.",
+    example:"2x+3x=5x."
+  }),
+  qOPEN({
+    block:"M3", skill:"M3_C14",
+    prompt:"Riduci: 4x^2 - x^2",
+    checker:(u)=> equalPoly(u, "3x^2"),
+    rule:"Somma/sottrai i coefficienti dei termini simili.",
+    example:"4x²-x²=3x²."
+  }),
+  qOPEN({
+    block:"M3", skill:"M3_C15",
+    prompt:"Qual è il grado del polinomio 4x^3 - 2x + 1?",
+    checker:(u)=> normalizeInput(u)==="3",
+    rule:"Grado del polinomio = massimo grado tra i suoi monomi.",
+    example:"max(3,1,0)=3."
+  })
+];
+
+/* -------------------- M4 Questions (guided for distributive/binomials) -------------------- */
+function guidedDistributive(){
+  // 2x(3x+1)=6x^2+2x
+  return qGUIDED({
+    block:"M4",
+    skills:["M4_C18","M4_C20"],
+    title:"Svolgi: 2x(3x+1)",
+    rule:"Distributiva: moltiplica il monomio per OGNI termine del polinomio, poi riduci.",
+    example:"2x·3x=6x² e 2x·1=2x → 6x²+2x",
+    steps:[
+      qMCQ({
+        block:"M4", skill:"M4_C20",
+        prompt:"Primo passo corretto?",
+        choices:[
+          "Moltiplico 2x solo per 3x",
+          "Moltiplico 2x per tutti i termini (3x e 1)",
+          "Sommo 2x+3x"
+        ],
+        answerIndex:1,
+        rule:"Prima distribuisci su tutti i termini.",
+        example:"2x(3x+1)=2x·3x + 2x·1"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C18",
+        prompt:"Calcola il primo prodotto: 2x·3x =",
+        checker:(u)=> equalPoly(u, "6x^2"),
+        rule:"Moltiplica coefficienti e somma esponenti: x·x=x².",
+        example:"2·3=6 e x·x=x² → 6x²"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C18",
+        prompt:"Calcola il secondo prodotto: 2x·1 =",
+        checker:(u)=> equalPoly(u, "2x"),
+        rule:"Moltiplicare per 1 lascia invariato.",
+        example:"2x·1=2x"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C20",
+        prompt:"Scrivi il risultato finale:",
+        checker:(u)=> equalPoly(u, "6x^2+2x"),
+        rule:"Somma i prodotti ottenuti.",
+        example:"6x²+2x"
+      })
+    ]
+  });
+}
+
+function guidedBinomial(){
+  // (x+2)(x+3)=x^2+5x+6
+  return qGUIDED({
+    block:"M4",
+    skills:["M4_C19","M4_C20"],
+    title:"Svolgi: (x+2)(x+3)",
+    rule:"Binomio×binomio: fai 4 prodotti (ogni termine con ogni termine), poi riduci.",
+    example:"x·x=x², x·3=3x, 2·x=2x, 2·3=6 → x²+5x+6",
+    steps:[
+      qMCQ({
+        block:"M4", skill:"M4_C20",
+        prompt:"Quanti prodotti devi fare?",
+        choices:["2","3","4"],
+        answerIndex:2,
+        rule:"Binomio×binomio → 4 prodotti.",
+        example:"(a+b)(c+d) = ac+ad+bc+bd"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C19",
+        prompt:"Prodotto 1: x·x =",
+        checker:(u)=> equalPoly(u, "x^2"),
+        rule:"x·x = x².",
+        example:"x^2"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C19",
+        prompt:"Prodotto 2: x·3 =",
+        checker:(u)=> equalPoly(u, "3x"),
+        rule:"Moltiplica il coefficiente: 1·3=3.",
+        example:"3x"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C19",
+        prompt:"Prodotto 3: 2·x =",
+        checker:(u)=> equalPoly(u, "2x"),
+        rule:"2·x=2x.",
+        example:"2x"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C19",
+        prompt:"Prodotto 4: 2·3 =",
+        checker:(u)=> equalPoly(u, "6"),
+        rule:"2·3=6.",
+        example:"6"
+      }),
+      qOPEN({
+        block:"M4", skill:"M4_C20",
+        prompt:"Somma e riduci i 4 prodotti (risultato finale):",
+        checker:(u)=> equalPoly(u, "x^2+5x+6"),
+        rule:"Somma: x² + (3x+2x) + 6.",
+        example:"x^2+5x+6"
+      })
+    ]
+  });
+}
+
+const M4_QUESTIONS = [
+  qOPEN({
+    block:"M4", skill:"M4_C16",
+    prompt:"Somma: (2x+3) + (x+1)",
+    checker:(u)=> equalPoly(u, "3x+4"),
+    rule:"Somma: togli parentesi e riduci termini simili.",
+    example:"2x+3+x+1=3x+4"
+  }),
+  qOPEN({
+    block:"M4", skill:"M4_C17",
+    prompt:"Differenza: (3x+2) - (x+1)",
+    checker:(u)=> equalPoly(u, "2x+1"),
+    rule:"Nella differenza cambi segno a TUTTI i termini del secondo polinomio.",
+    example:"3x+2-x-1=2x+1"
+  }),
+  guidedDistributive(),
+  guidedBinomial()
+];
+
+/* -------------------- M5 Questions -------------------- */
+function gcd(a,b){
+  a = Math.abs(a); b = Math.abs(b);
+  while(b){ const t=a%b; a=b; b=t; }
+  return a;
+}
+function lcm(a,b){
+  if(a===0||b===0) return 0;
+  return Math.abs(a*b)/gcd(a,b);
+}
+function parseMonomial(m){
+  // simple monomial like 6x^3y^2, -4x, 8
+  const s = normalizeInput(m);
+  const t = parseTerm((s[0]==="-"||s[0]==="+")?s:("+"+s));
+  if(!t) return null;
+  return t;
+}
+function monomialToString(coef, exps){
+  // build normalized output like 2x^2y^1 => 2x^2y
+  let out = "";
+  if(coef === -1 && (exps.x||exps.y||exps.a||exps.b)) out += "-";
+  else if(coef !== 1 || !(exps.x||exps.y||exps.a||exps.b)) out += String(coef);
+
+  for(const v of VARS){
+    const e = exps[v]||0;
+    if(e<=0) continue;
+    out += v;
+    if(e!==1) out += "^" + e;
+  }
+  return out;
+}
+function mcdMonomials(m1,m2){
+  const A = parseMonomial(m1);
+  const B = parseMonomial(m2);
+  if(!A || !B) return null;
+  const coef = gcd(A.coef, B.coef);
+  const exps = {x:0,y:0,a:0,b:0};
+  for(const v of VARS){
+    const ea = A.exps[v]||0;
+    const eb = B.exps[v]||0;
+    if(ea>0 && eb>0) exps[v] = Math.min(ea,eb);
+  }
+  return monomialToString(coef, exps);
+}
+function mcmMonomials(m1,m2){
+  const A = parseMonomial(m1);
+  const B = parseMonomial(m2);
+  if(!A || !B) return null;
+  const coef = lcm(A.coef, B.coef);
+  const exps = {x:0,y:0,a:0,b:0};
+  for(const v of VARS){
+    const ea = A.exps[v]||0;
+    const eb = B.exps[v]||0;
+    exps[v] = Math.max(ea,eb);
+  }
+  return monomialToString(coef, exps);
+}
+
+const M5_QUESTIONS = [
+  qOPEN({
+    block:"M5", skill:"M5_C21",
+    prompt:"Vero/Falso: Nel MCD si prendono gli esponenti MINORI.",
+    checker:(u)=> {
+      const s = normalizeInput(u);
+      return s==="vero" || s==="v";
+    },
+    rule:"MCD: lettere comuni con esponente minore. MCM: tutte le lettere con esponente maggiore.",
+    example:"MCD(6x^3,4x^2)=2x^2"
+  }),
+  qOPEN({
+    block:"M5", skill:"M5_C22",
+    prompt:"Calcola MCD tra 6x^2 e 4x",
+    checker:(u)=> equalPoly(u, "2x"),
+    rule:"MCD: MCD coefficienti + lettere comuni + esponente minore.",
+    example:"MCD(6,4)=2 e x^(min(2,1))=x → 2x"
+  }),
+  qOPEN({
+    block:"M5", skill:"M5_C24",
+    prompt:"Calcola MCM tra 3x^2y e 5xy^2",
+    checker:(u)=> equalPoly(u, "15x^2y^2"),
+    rule:"MCM: MCM coefficienti + tutte le lettere + esponente maggiore.",
+    example:"MCM(3,5)=15; x^2; y^2 → 15x^2y^2"
+  }),
+  qOPEN({
+    block:"M5", skill:"M5_C25",
+    prompt:"Calcola MCD tra 8x^3y e 12x^2y",
+    checker:(u)=> equalPoly(u, "4x^2y"),
+    rule:"Procedura: coefficienti → lettere comuni → min esponenti.",
+    example:"MCD(8,12)=4; x^2; y^1 → 4x^2y"
+  }),
+  qOPEN({
+    block:"M5", skill:"M5_C23",
+    prompt:"Calcola MCM tra 7x e 5y",
+    checker:(u)=> equalPoly(u, "35xy"),
+    rule:"Nel MCM prendi TUTTE le lettere con esponente maggiore (qui 1 e 1).",
+    example:"MCM(7,5)=35 → 35xy"
+  })
+];
+
+/* -------------------- Bank by block -------------------- */
+function bankFor(blockId){
+  switch(blockId){
+    case "P0": return P0_QUESTIONS.slice();
+    case "M1": return M1_QUESTIONS.slice();
+    case "M2": return M2_QUESTIONS.slice();
+    case "M3": return M3_QUESTIONS.slice();
+    case "M4": return M4_QUESTIONS.slice();
+    case "M5": return M5_QUESTIONS.slice();
+    default: return [];
+  }
+}
+
+/* -------------------- Adaptive training selection -------------------- */
+function weakestSkill(profile, skillIds){
+  // choose lowest pct among those with some attempts; if none, choose first
+  let best = null;
+  for(const id of skillIds){
+    const st = skillStats(profile, id);
+    const pct = st.n ? st.pct : -1; // unseen -> prioritize
+    const val = st.n ? pct : -1;
+    if(best === null || val < best.val){
+      best = {id, val, n: st.n, pct: st.pct};
+    }
+  }
+  return best ? best.id : skillIds[0];
+}
+
+function pickTrainingBlock(profile){
+  // priority: any block not completed but unlocked? take earliest in path.
+  // P0 is a support block; if very weak (many wrong) we can suggest it later, but not force now.
+  const path = ["M1","M2","M3","M4","M5"];
+  for(const bid of path){
+    if(!blockUnlocked(profile, bid)) return bid; // locked -> train prerequisites (itself) ? For M2 locked -> train M1
+    if(!blockCompleted(profile, bid)) return bid;
+  }
+  return "M5";
+}
+
+/* -------------------- Quiz state -------------------- */
 let profile = loadProfile();
-updateUnlocks(profile);
-saveProfile(profile);
-
-let mode = 'train'; // 'train' or 'test'
-let currentBlock = profile.lastBlock || 'M1';
-let quizList = [];
-let qi = 0;
+let mode = "train"; // train | verify
+let currentBlock = "M1";
+let queue = [];
+let qIndex = 0;
 let score = 0;
 let locked = false;
-let lastWasWrong = false;
-let wrongLog = [];
+let guidedState = null; // {q, stepIndex}
 
-function showSection(id){
-  ['home','quiz','result'].forEach(x=>$(x).classList.add('hidden'));
-  $(id).classList.remove('hidden');
+function setSafeName(){
+  const n = localStorage.getItem(LS.name) || "";
+  if(n){
+    $("hello").textContent = `Ciao ${n} 👋`;
+    $("hello").classList.remove("hidden");
+  }
 }
 
-function blockStateLabel(bid){
-  if(bid==='M2' && !profile.unlocked.M2) return '🔒 Bloccato: completa M1';
-  if(bid==='M3' && !profile.unlocked.M3) return '🔒 Bloccato: completa M2';
-  if(bid==='M4' && !profile.unlocked.M4) return '🔒 Bloccato: completa M3';
-  if(bid==='M5' && !profile.unlocked.M5) return '🔒 Bloccato: completa M4';
-  if(bid==='FIN' && !profile.unlocked.FIN) return '🔒 Bloccato: completa M5';
-  return 'Disponibile';
+/* -------------------- UI: blocks list -------------------- */
+function renderBlocks(){
+  const el = $("blocks");
+  el.innerHTML = "";
+  for(const b of BLOCKS){
+    const btn = document.createElement("button");
+    btn.className = "blockBtn";
+    const unlocked = blockUnlocked(profile, b.id) || b.id==="P0" || b.id==="M1";
+    const completed = blockCompleted(profile, b.id);
+    const label = completed ? "✅ completato" : (unlocked ? "🟡 disponibile" : "🔒 bloccato");
+    btn.innerHTML = `<strong>${b.short}</strong> ${b.name.replace(/^.. /,"")}<small>${label}</small>`;
+    if(!unlocked){
+      btn.classList.add("locked");
+      btn.disabled = true;
+    } else {
+      btn.addEventListener("click", ()=>{
+        profile.lastBlock = b.id;
+        saveProfile(profile);
+        startBlock(b.id, "train");
+      });
+    }
+    el.appendChild(btn);
+  }
 }
 
-function computeBlockPct(bid){
-  if(bid==='FIN') return {avg: profile.unlocked.FIN?100:0, allOk: profile.unlocked.FIN};
-  const b = BLOCKS.find(x=>x.id===bid);
-  const comps = b.comps;
-  const vals = comps.map(c=>mastery(profile,bid,c).pct);
-  const avg = Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
-  const allOk = comps.every(c=>mastery(profile,bid,c).ok);
-  return {avg, allOk};
-}
+/* -------------------- UI: dashboard -------------------- */
+function pctToWidth(p){ return `${Math.round(p*100)}%`; }
 
-function renderHome(){
-  updateUnlocks(profile);
-  saveProfile(profile);
+function renderDashboard(){
+  const dash = $("dashboard");
+  dash.innerHTML = "";
 
-  // message
-  let msg = 'Allenati per sbloccare i blocchi: devi consolidare le competenze (80% su ultime 10 + 3 corrette di fila).';
-  if(!profile.unlocked.M2) msg = 'Obiettivo: sbloccare M2. Completa M1: tutte le competenze devono diventare verdi.';
-  else if(!profile.unlocked.M3) msg = 'Obiettivo: sbloccare M3. Ora consolida M2 (prodotto/divisione/potenza/segni/scelta regola).';
-  else if(!profile.unlocked.M4) msg = 'Obiettivo: sbloccare M4. Ora consolida M3 (termini simili, riduzione, grado).';
-  else if(!profile.unlocked.M5) msg = 'Obiettivo: sbloccare M5. Consolida M4 (somma/differenza/distributiva/binomi/ordine).';
-  else msg = 'Ottimo: M5 è disponibile. Allenati su MCD/MCM (min/max esponenti) e poi fai la verifica finale.';
-  $('homeMsg').textContent = msg;
+  for(const b of BLOCKS){
+    // show P0 + all M blocks
+    const row = document.createElement("div");
+    row.className = "dashRow";
 
-  // blocks list
-  const blocksEl = $('blocks');
-  blocksEl.innerHTML='';
-  const order = ['P0','M1','M2','M3','M4','M5','FIN'];
-  for(const bid of order){
-    const b = BLOCKS.find(x=>x.id===bid);
-    const st = blockStateLabel(bid);
-    const row = document.createElement('div');
-    row.className='blockRow';
+    const completed = blockCompleted(profile, b.id);
+    const unlocked = blockUnlocked(profile, b.id) || b.id==="P0" || b.id==="M1";
+    const label = completed ? "✅" : (unlocked ? "🟡" : "🔒");
 
-    const left = document.createElement('div');
-    left.className='left';
-    left.innerHTML = `<div class="name">${b.name}</div><div class="state">${st}</div>`;
+    // compute avg pct of skills
+    const stats = b.skills.map(sid=>skillStats(profile, sid));
+    const seen = stats.filter(s=>s.n>0);
+    const avg = seen.length ? (seen.reduce((a,s)=>a+s.pct,0)/seen.length) : 0;
+    const pct = completed ? 1 : avg;
 
-    const btns = document.createElement('div');
-    btns.style.display='flex';
-    btns.style.gap='8px';
-
-    const trainBtn = document.createElement('button');
-    trainBtn.className='btn primary';
-    trainBtn.textContent='Allenati';
-    trainBtn.disabled = (bid==='M2' && !profile.unlocked.M2) || (bid==='M3' && !profile.unlocked.M3) || (bid==='M4' && !profile.unlocked.M4) || (bid==='M5' && !profile.unlocked.M5) || (bid==='FIN' && !profile.unlocked.FIN);
-    trainBtn.addEventListener('click', ()=>start(bid,'train'));
-
-    const testBtn = document.createElement('button');
-    testBtn.className='btn';
-    testBtn.textContent='Verifica';
-    testBtn.disabled = trainBtn.disabled;
-    testBtn.addEventListener('click', ()=>start(bid,'test'));
-
-    btns.appendChild(trainBtn);
-    btns.appendChild(testBtn);
-
-    row.appendChild(left);
-    row.appendChild(btns);
-    blocksEl.appendChild(row);
+    row.innerHTML = `
+      <div class="dashRowTop">
+        <div><strong>${label} ${b.id}</strong> <span class="muted">${b.name.replace(/^.. /,"")}</span></div>
+        <div class="tag">${Math.round(pct*100)}%</div>
+      </div>
+      <div class="bar"><div style="width:${pctToWidth(pct)}"></div></div>
+    `;
+    dash.appendChild(row);
   }
 
   // badges
-  const badgesEl = $('badges');
-  badgesEl.innerHTML='';
-  const badgeOrder = [
-    {k:'P0', label:'🏅 Proporzioni'},
-    {k:'M1', label:'🏅 Monomi'},
-    {k:'M2', label:'🏅 Operazioni monomi'},
-    {k:'M3', label:'🏅 Polinomi'},
-    {k:'M4', label:'🏅 Operazioni polinomi'},
-    {k:'M5', label:'🏅 MCD/MCM'},
-    {k:'FIN', label:'🏁 Verifica finale'}
-  ];
-  for(const b of badgeOrder){
-    const div = document.createElement('div');
-    div.className = 'badge' + (profile.badges[b.k] ? ' on' : '');
-    div.textContent = b.label;
-    badgesEl.appendChild(div);
-  }
-
-  // progress bars (block avg)
-  const prog = $('progress');
-  prog.innerHTML='';
-  for(const bid of ['P0','M1','M2','M3','M4','M5','FIN']){
-    const b = BLOCKS.find(x=>x.id===bid);
-    // if locked, show 0
-    let pct = 0;
-    let allOk = false;
-    if(!((bid==='M2' && !profile.unlocked.M2) || (bid==='M3' && !profile.unlocked.M3) || (bid==='M4' && !profile.unlocked.M4) || (bid==='M5' && !profile.unlocked.M5) || (bid==='FIN' && !profile.unlocked.FIN))){
-      const c = computeBlockPct(bid);
-      pct = c.avg;
-      allOk = c.allOk;
+  const bDone = [];
+  for(const b of BLOCKS){
+    if(blockCompleted(profile, b.id)){
+      bDone.push(b.id);
     }
-    const item = document.createElement('div');
-    item.className='progressItem';
-    item.innerHTML = `
-      <div class="progressLabel"><span>${b.name}</span><span>${allOk?'✅':''} ${pct}%</span></div>
-      <div class="bar"><div style="width:${pct}%"></div></div>
-    `;
-    prog.appendChild(item);
+  }
+  if(bDone.length){
+    const row = document.createElement("div");
+    row.className = "dashRow";
+    row.innerHTML = `<div class="dashRowTop"><div><strong>🏅 Badge</strong> <span class="muted">obiettivi raggiunti</span></div></div>
+      <div class="muted" style="margin-top:8px">${bDone.map(x=>`<span class="tag" style="margin-right:6px">${x} completato</span>`).join("")}</div>`;
+    dash.appendChild(row);
   }
 }
 
-function buildKeypad(){
-  const keys = ['x','y','a','b','^','+','-','(',')','2','3','4','5','6','7','8','9','0','←','C'];
-  const pad = $('keypad');
-  pad.innerHTML='';
-  keys.forEach(k=>{
-    const btn=document.createElement('button');
-    btn.type='button';
-    btn.className='key';
-    btn.textContent=k;
-    btn.addEventListener('click', ()=>{
-      const inp=$('answer');
-      if(k==='←') inp.value = inp.value.slice(0,-1);
-      else if(k==='C') inp.value='';
-      else inp.value += k;
-      inp.focus();
-    });
-    pad.appendChild(btn);
+/* -------------------- Home status -------------------- */
+function updateHomeStatus(){
+  const next = pickTrainingBlock(profile);
+  $("statusPill").textContent = `Stato: consigliato ${next}`;
+  $("homeHint").textContent = `Consiglio: Allenati su ${next} per avanzare.`;
+}
+
+/* -------------------- Build quiz queue -------------------- */
+function buildQueue(blockId, modeWanted){
+  const bank = bankFor(blockId);
+
+  if(modeWanted === "verify"){
+    // fixed length verify
+    const N = Math.min(12, bank.length); // lightweight
+    return shuffle(bank).slice(0,N);
+  }
+
+  // train: adaptive: pick weakest skill, then choose questions matching it
+  const b = blockById(blockId);
+  const targetSkill = weakestSkill(profile, b.skills);
+  const filtered = bank.filter(q=>{
+    if(q.type==="guided"){
+      // if any step uses targetSkill
+      return q.skills.includes(targetSkill) || q.steps.some(s=>s.skill===targetSkill);
+    }
+    return q.skill === targetSkill;
   });
+  const pool = filtered.length ? filtered : bank;
+  // 10 questions per session
+  return shuffle(pool).slice(0, Math.min(10, pool.length));
 }
 
-function pickQuestionsFor(blockId, mode){
-  const pool = (blockId==='FIN') ? BANK.filter(q=>['M1','M2','M3','M4','M5','P0'].includes(q.block)) : BANK.filter(q=>q.block===blockId);
-  // In train: adaptive: prefer comps not ok
-  if(mode==='train'){
-    const b = BLOCKS.find(x=>x.id===blockId);
-    const weights = new Map();
-    for(const c of b.comps){
-      const m = mastery(profile, blockId, c);
-      // lower pct => higher weight
-      const w = clamp(120 - m.pct, 20, 120);
-      weights.set(c,w);
-    }
-    const weighted = [];
-    for(const q of pool){
-      const w = weights.get(q.comp) ?? 50;
-      for(let i=0;i<Math.round(w/20);i++) weighted.push(q);
-    }
-    return shuffle(weighted).slice(0, 12);
+function shuffle(arr){
+  const a = arr.slice();
+  for(let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
   }
-  // test: simple random 12
-  return shuffle(pool).slice(0, 12);
+  return a;
 }
 
-function start(blockId, whichMode){
-  mode = whichMode;
+/* -------------------- Start flows -------------------- */
+function startBlock(blockId, modeWanted){
+  mode = modeWanted;
   currentBlock = blockId;
   profile.lastBlock = blockId;
   saveProfile(profile);
 
-  quizList = pickQuestionsFor(blockId, whichMode);
-  qi = 0;
+  // handle prerequisite locks for train selections:
+  if(blockId!=="P0" && blockId!=="M1"){
+    const b = blockById(blockId);
+    for(const pre of b.prereq){
+      if(!blockCompleted(profile, pre)){
+        toast(`🔒 ${blockId} bloccato: prima completa ${pre}.`);
+        startBlock(pre, "train");
+        return;
+      }
+    }
+  }
+
+  queue = buildQueue(blockId, modeWanted);
+  qIndex = 0;
   score = 0;
-  wrongLog = [];
-  lastWasWrong = false;
+  guidedState = null;
 
-  $('quizTitle').textContent = whichMode==='train' ? 'Allenamento' : 'Verifica';
-  $('quizMeta').textContent = `${BLOCKS.find(b=>b.id===blockId).name} • ${whichMode==='train' ? 'con regole + esempi' : 'senza aiuti'}`;
-  buildKeypad();
-  showSection('quiz');
-  renderQ();
+  hide("home");
+  hide("progressView");
+  show("quiz");
+
+  renderQuestion();
 }
 
-function setScorePill(){
-  $('scorePill').textContent = `${score}/${qi+1} • ${qi+1}/${quizList.length}`;
+function startRecommended(){
+  const bid = pickTrainingBlock(profile);
+  startBlock(bid, "train");
 }
 
-let guidedStepIndex = 0;
-let guidedRoot = null;
+function startVerify(){
+  // verify allowed for current recommended block if completed; for demo, verify current recommended if unlocked;
+  const bid = pickTrainingBlock(profile);
+  if(!blockUnlocked(profile, bid)){
+    toast("🔒 Verifica non disponibile: completa i prerequisiti.");
+    return;
+  }
+  // require P0 before verify of M2 or M5 (as designed)
+  if((bid==="M2" || bid==="M5") && !blockCompleted(profile,"P0")){
+    toast("⛔ Prima completa P0 (Proporzioni) per questa verifica.");
+    startBlock("P0","train");
+    return;
+  }
+  startBlock(bid, "verify");
+}
 
-function renderQ(){
-  locked=false;
-  $('nextBtn').disabled=true;
-  $('feedback').textContent='';
+/* -------------------- Render question -------------------- */
+function setProgressBar(){
+  const pct = queue.length ? (qIndex/queue.length)*100 : 0;
+  $("progressBar").style.width = `${pct}%`;
+}
 
-  const q = quizList[qi];
-  setScorePill();
+function setRule(q){
+  if(mode === "verify"){
+    $("ruleNote").classList.add("hidden");
+    return;
+  }
+  $("ruleNote").classList.remove("hidden");
+  const txt = q.rule ? `${q.rule}\nEsempio: ${q.example || "—"}` : "—";
+  $("ruleText").textContent = txt;
+}
 
-  // rule box
-  const showRule = (mode==='train');
-  $('ruleBox').innerHTML = showRule ? renderMathInline(q.rule).replace(/\n/g,'<br>') : '—';
+function setMeta(q){
+  $("meta").textContent = `${mode==="train" ? "Allenamento" : "Verifica"} • Blocco ${currentBlock}`;
+}
 
-  $('choices').innerHTML='';
-  $('answerWrap').classList.add('hidden');
+function renderQuestion(){
+  locked = false;
+  $("nextBtn").disabled = true;
+  $("feedback").textContent = "";
+  $("choices").innerHTML = "";
+  hide("openWrap");
 
-  if(q.type==='guided'){
-    guidedRoot = q;
-    guidedStepIndex = 0;
+  const q = queue[qIndex];
+  if(!q){
+    finishBlock();
+    return;
+  }
+
+  $("quizTitle").textContent = `${qIndex+1}/${queue.length}`;
+  $("scorePill").textContent = `Punti: ${score}`;
+
+  setProgressBar();
+
+  if(q.type === "guided"){
+    guidedState = { q, stepIndex: 0 };
     renderGuidedStep();
     return;
   }
 
-  guidedRoot = null;
-  const qText = renderMathInline(q.q);
-  $('qtext').innerHTML = qText;
+  guidedState = null;
+  setRule(q);
+  setMeta(q);
 
-  if(q.type==='mcq'){
+  $("qtext").textContent = formatExponents(q.prompt);
+
+  if(q.type === "mcq"){
     q.choices.forEach((c,i)=>{
-      const btn=document.createElement('button');
-      btn.className='choice';
-      btn.innerHTML = renderMathInline(c);
-      btn.addEventListener('click', ()=>chooseMCQ(q,i,btn));
-      $('choices').appendChild(btn);
+      const btn = document.createElement("button");
+      btn.className="choice";
+      btn.type="button";
+      btn.textContent = formatExponents(c);
+      btn.addEventListener("click", ()=> chooseMCQ(i, btn));
+      $("choices").appendChild(btn);
     });
   } else {
-    $('answerWrap').classList.remove('hidden');
-    $('answer').value='';
-    $('answer').focus();
+    show("openWrap");
+    $("openInput").value = "";
+    $("openInput").focus();
+    renderKeypad();
   }
 }
 
 function renderGuidedStep(){
-  $('choices').innerHTML='';
-  $('answerWrap').classList.add('hidden');
-  $('feedback').textContent='';
-  $('nextBtn').disabled=true;
-  locked=false;
+  const {q, stepIndex} = guidedState;
+  const step = q.steps[stepIndex];
 
-  const root = guidedRoot;
-  const step = root.steps[guidedStepIndex];
-  const stepText = renderMathInline(step.q);
-  $('qtext').innerHTML = `<strong>Step ${guidedStepIndex+1}/${root.steps.length}</strong><br>${stepText}`;
+  $("qtext").textContent = formatExponents(`${q.title}\n\nStep ${stepIndex+1}/${q.steps.length}: ${step.prompt}`);
+  setRule(step);
+  setMeta(step);
 
-  if(step.type==='mcq'){
+  $("choices").innerHTML = "";
+  hide("openWrap");
+  $("feedback").textContent = "";
+  $("nextBtn").disabled = true;
+  locked = false;
+
+  if(step.type === "mcq"){
     step.choices.forEach((c,i)=>{
-      const btn=document.createElement('button');
-      btn.className='choice';
-      btn.innerHTML = renderMathInline(c);
-      btn.addEventListener('click', ()=>chooseGuidedMCQ(step,i,btn));
-      $('choices').appendChild(btn);
+      const btn = document.createElement("button");
+      btn.className="choice";
+      btn.type="button";
+      btn.textContent = formatExponents(c);
+      btn.addEventListener("click", ()=> chooseGuidedMCQ(i, btn));
+      $("choices").appendChild(btn);
     });
   } else {
-    $('answerWrap').classList.remove('hidden');
-    $('answer').value='';
-    $('answer').focus();
+    show("openWrap");
+    $("openInput").value = "";
+    $("openInput").focus();
+    renderKeypad();
   }
 }
 
-function markCompetency(ok, block, comp){
-  pushResult(profile, block, comp, ok);
-  // for guided steps: if step has comp override
-  updateUnlocks(profile);
-  saveProfile(profile);
+/* -------------------- Keypad -------------------- */
+function insertAtCursor(input, text){
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  const v = input.value;
+  input.value = v.slice(0,start) + text + v.slice(end);
+  input.focus();
+  const pos = start + text.length;
+  input.setSelectionRange(pos,pos);
 }
 
-function chooseMCQ(q,i,btn){
-  if(locked) return;
-  locked=true;
-  const buttons=[...document.querySelectorAll('.choice')];
-  buttons.forEach(b=>b.disabled=true);
-  const correctIdx=q.a;
-  buttons[correctIdx].classList.add('correct');
-
-  const ok = i===correctIdx;
-  if(!ok) btn.classList.add('wrong');
-  markCompetency(ok, q.block, q.comp);
-
-  if(ok){
-    score += 1;
-    $('feedback').innerHTML = `✅ <strong>Corretto</strong>.`;
-  } else {
-    const expl = mode==='train' ? ` ${renderMathInline(q.rule).split('\n')[0]}` : '';
-    $('feedback').innerHTML = `❌ <strong>No</strong>.${expl}`;
-    wrongLog.push({q, user:q.choices[i]});
-  }
-  $('nextBtn').disabled=false;
-}
-
-function checkOpen(){
-  if(locked) return;
-  const q = guidedRoot ? guidedRoot.steps[guidedStepIndex] : quizList[qi];
-  const root = guidedRoot ? guidedRoot : null;
-
-  const userRaw = $('answer').value;
-  const expRaw = q.a;
-
-  // Try polynomial/monomial equivalence first (accept different term order)
-  let ok;
-  const polyEq = eqPoly(userRaw, expRaw);
-  if(polyEq === null){
-    // fallback strict normalize
-    ok = norm(userRaw) === norm(expRaw);
-  } else {
-    ok = polyEq;
-  }
-
-  locked=true;
-  if(ok){
-    score += 1;
-    $('feedback').innerHTML = `✅ <strong>Corretto</strong>.`;
-  } else {
-    let why = '';
-    if(mode==='train'){
-      if(root && root.rule) why = `<br><span class="muted">Regola:</span><br>${renderMathInline(root.rule).replace(/\n/g,'<br>')}`;
-      if(!root && typeof q.explainWrong==='function') why = `<br><span class="muted">Spiegazione:</span> ${renderMathInline(q.explainWrong($('answer').value))}`;
-    }
-    // Extra clarity in training: show WHY (if expression is equivalent but formatted differently)
-    let extra = '';
-    if(mode==='train'){
-      const expPoly = parsePoly(expRaw);
-      const userPoly = parsePoly(userRaw);
-      if(expPoly && userPoly){
-        extra = '<br><span class="muted">Nota:</span> In questa app accettiamo anche lo stesso risultato scritto con i termini in ordine diverso (es. 4+3x).';
-      }
-    }
-    $('feedback').innerHTML = `❌ <strong>No</strong>. <span class="muted">Corretto:</span> <strong>${renderMathInline(expRaw)}</strong>${why}${extra}`;
-    wrongLog.push({q: root?root: q, user:userRaw});
-  }
-
-  // competency bookkeeping
-  if(root){
-    // count only the root competency once, on last step completion
-    // but also track C10 if step has comp override
-    const comp = (q.comp) ? q.comp : root.comp;
-    markCompetency(ok, root.block, comp);
-  } else {
-    markCompetency(ok, q.block, q.comp);
-  }
-
-  $('nextBtn').disabled=false;
-}
-
-function chooseGuidedMCQ(step,i,btn){
-  if(locked) return;
-  locked=true;
-  const buttons=[...document.querySelectorAll('.choice')];
-  buttons.forEach(b=>b.disabled=true);
-  buttons[step.a].classList.add('correct');
-  const ok = i===step.a;
-  if(!ok) btn.classList.add('wrong');
-
-  // competency: if step has comp, count for that, else root
-  const comp = step.comp ? step.comp : guidedRoot.comp;
-  markCompetency(ok, guidedRoot.block, comp);
-
-  if(ok){
-    score += 1;
-    $('feedback').innerHTML = `✅ <strong>Corretto</strong>.`;
-  } else {
-    $('feedback').innerHTML = `❌ <strong>No</strong>.`;
-    wrongLog.push({q: guidedRoot, user: step.choices[i]});
-  }
-
-  $('nextBtn').disabled=false;
-}
-
-function next(){
-  if(guidedRoot){
-    guidedStepIndex += 1;
-    if(guidedStepIndex < guidedRoot.steps.length){
-      renderGuidedStep();
+function renderKeypad(){
+  const keys = ["x","y","a","b","^","+","-","(",")","/","*","1","2","3","4","5","6","7","8","9","0"];
+  const pad = $("keypad");
+  pad.innerHTML = "";
+  keys.forEach(k=>{
+    const b = document.createElement("div");
+    b.className="key";
+    b.textContent = k;
+    b.addEventListener("click", ()=>{
+      insertAtCursor($("openInput"), k);
+    });
+    pad.appendChild(b);
+  });
+  const del = document.createElement("div");
+  del.className="key wide";
+  del.textContent = "⌫";
+  del.addEventListener("click", ()=>{
+    const input = $("openInput");
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    if(start!==end){
+      const v = input.value;
+      input.value = v.slice(0,start) + v.slice(end);
+      input.setSelectionRange(start,start);
+      input.focus();
       return;
     }
-    // finished guided root: advance to next main question
-    guidedRoot = null;
-  }
+    if(start>0){
+      const v = input.value;
+      input.value = v.slice(0,start-1)+v.slice(start);
+      input.setSelectionRange(start-1,start-1);
+      input.focus();
+    }
+  });
+  pad.appendChild(del);
 
-  qi += 1;
-  if(qi >= quizList.length){
-    finish();
-  } else {
-    renderQ();
-  }
+  const clr = document.createElement("div");
+  clr.className="key wide";
+  clr.textContent = "C";
+  clr.addEventListener("click", ()=>{
+    $("openInput").value="";
+    $("openInput").focus();
+  });
+  pad.appendChild(clr);
 }
 
-function finish(){
-  showSection('result');
-  const pct = Math.round(100*score/quizList.length);
-  $('resultText').textContent = `Punteggio: ${score}/${quizList.length} (${pct}%).`;
+/* -------------------- Answering -------------------- */
+function explainWrong(q, extra){
+  const base = q.explainNo || "";
+  return [base, extra].filter(Boolean).join("\n");
+}
+function explainRight(q){
+  return q.explainOk || "✅ Corretto!";
+}
 
-  // show weakest comps for the block
-  const b = BLOCKS.find(x=>x.id===currentBlock);
-  const comps = b.comps.map(c=>({c, m:mastery(profile,currentBlock,c)}));
-  comps.sort((a,b)=>a.m.pct - b.m.pct);
-  const weakest = comps.slice(0,2).map(x=>`${currentBlock}-${x.c}: ${x.m.pct}%`).join(' • ');
-  $('resultDetails').textContent = `Focus: ${weakest || '—'}`;
+function updateAfterAnswer(skillId, ok){
+  pushSkill(profile, skillId, ok);
 
-  $('review').classList.add('hidden');
-  $('review').innerHTML='';
+  // streak
+  profile.streak = ok ? (profile.streak + 1) : 0;
 
-  // refresh home
-  updateUnlocks(profile);
+  // badge checks (block completion)
+  for(const b of BLOCKS){
+    if(!profile.badges[b.id] && blockCompleted(profile, b.id)){
+      profile.badges[b.id] = true;
+      toast(`🏅 ${b.id} completato!`);
+    }
+  }
+
   saveProfile(profile);
 }
 
-function showReview(){
-  const box = $('review');
-  box.innerHTML='';
-  if(wrongLog.length===0){
-    box.innerHTML = `<div class="reviewItem"><div class="tag">Perfetto</div>Nessun errore 🎉</div>`;
-    box.classList.remove('hidden');
+function chooseMCQ(i, btn){
+  if(locked) return;
+  locked = true;
+  const q = queue[qIndex];
+
+  const all = Array.from(document.querySelectorAll(".choice"));
+  all.forEach(b=>b.disabled=true);
+
+  const correct = q.answerIndex;
+  const ok = (i === correct);
+
+  all[correct].classList.add("correct");
+  if(!ok) btn.classList.add("wrong");
+
+  if(ok){
+    score += 1;
+    $("feedback").textContent = explainRight(q);
+  } else {
+    $("feedback").textContent = explainWrong(q);
+  }
+
+  updateAfterAnswer(q.skill, ok);
+  checkUnlocks();
+  $("scorePill").textContent = `Punti: ${score}`;
+  $("nextBtn").disabled = false;
+}
+
+function checkOpen(q){
+  const u = $("openInput").value;
+  if(q.checker) return !!q.checker(u);
+  if(typeof q.answer === "string"){
+    return normalizeInput(u) === normalizeInput(q.answer);
+  }
+  return false;
+}
+
+function submitOpen(){
+  if(locked) return;
+  locked = true;
+  const q = queue[qIndex];
+  const ok = checkOpen(q);
+
+  if(ok){
+    score += 1;
+    $("feedback").textContent = explainRight(q) || "✅ Corretto!";
+  } else {
+    // show correction more explicit in training
+    let extra = "";
+    if(mode==="train"){
+      if(q.answer) extra = `Corretto: ${formatExponents(q.answer)}`;
+      else if(q.example) extra = `Esempio: ${formatExponents(q.example)}`;
+    }
+    $("feedback").textContent = explainWrong(q, extra) || "❌ Non corretto. Riprova.";
+  }
+
+  updateAfterAnswer(q.skill, ok);
+  checkUnlocks();
+  $("scorePill").textContent = `Punti: ${score}`;
+  $("nextBtn").disabled = false;
+}
+
+/* guided */
+function chooseGuidedMCQ(i, btn){
+  if(locked) return;
+  locked = true;
+
+  const {q, stepIndex} = guidedState;
+  const step = q.steps[stepIndex];
+
+  const all = Array.from(document.querySelectorAll(".choice"));
+  all.forEach(b=>b.disabled=true);
+
+  const ok = (i === step.answerIndex);
+  all[step.answerIndex].classList.add("correct");
+  if(!ok) btn.classList.add("wrong");
+
+  $("feedback").textContent = ok ? "✅ Ok" : "❌ No. Rileggi la regola e riprova.";
+
+  updateAfterAnswer(step.skill, ok);
+  checkUnlocks();
+  $("nextBtn").disabled = false;
+}
+
+function submitGuidedOpen(){
+  if(locked) return;
+  locked = true;
+
+  const {q, stepIndex} = guidedState;
+  const step = q.steps[stepIndex];
+
+  const ok = checkOpen(step);
+
+  $("feedback").textContent = ok ? "✅ Ok" : "❌ No. Riprova seguendo la regola.";
+  updateAfterAnswer(step.skill, ok);
+  checkUnlocks();
+  $("nextBtn").disabled = false;
+}
+
+function checkUnlocks(){
+  // unlock hints for M2 based on M1 completion, etc.
+  // nothing to do here besides toast handled in badge checks; but give specific message when M1 becomes ready for M2
+  const m1Done = blockCompleted(profile, "M1");
+  if(m1Done && !profile.badges["M1_UNLOCK_M2"]){
+    profile.badges["M1_UNLOCK_M2"] = true;
+    toast("🏅 Hai davvero capito i monomi! Si sblocca M2.");
+    saveProfile(profile);
+  }
+}
+
+/* -------------------- Finish block session -------------------- */
+function finishBlock(){
+  // at end, return to home
+  toast(`Sessione finita: ${score}/${queue.length}`);
+  goHome();
+}
+
+/* -------------------- Navigation -------------------- */
+function goHome(){
+  hide("quiz");
+  hide("progressView");
+  show("home");
+  renderBlocks();
+  renderDashboard();
+  updateHomeStatus();
+}
+
+function showProgress(){
+  hide("home");
+  hide("quiz");
+  show("progressView");
+  renderProgressDetail();
+}
+
+function renderProgressDetail(){
+  const body = $("progressBody");
+  body.innerHTML = "";
+
+  for(const b of BLOCKS){
+    const card = document.createElement("div");
+    card.className = "progressCard";
+    const completed = blockCompleted(profile, b.id);
+    card.innerHTML = `<h3>${b.id} — ${b.name.replace(/^.. /,"")}</h3>
+      <div class="muted tiny">${completed ? "✅ completato" : "in progresso"}</div>`;
+    for(const sid of b.skills){
+      const st = skillStats(profile, sid);
+      const pct = st.n ? Math.round(st.pct*100) : 0;
+      const status = skillGreen(profile, sid) ? "✅" : (st.n ? "🟡" : "⚪");
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = `<div>${status} <span class="muted">${sid}</span></div><div class="tag">${pct}%</div>`;
+      card.appendChild(row);
+    }
+    body.appendChild(card);
+  }
+}
+
+function resetAll(){
+  if(!confirm("Reset progressi?")) return;
+  localStorage.removeItem(LS.profile);
+  profile = loadProfile();
+  toast("Reset fatto.");
+  goHome();
+}
+
+/* -------------------- Events -------------------- */
+$("saveNameBtn").addEventListener("click", ()=>{
+  const n = $("nameInput").value.trim();
+  if(!n){ toast("Scrivi un nome."); return; }
+  localStorage.setItem(LS.name, n);
+  setSafeName();
+  hide("onboarding");
+  show("home");
+  goHome();
+});
+
+$("trainBtn").addEventListener("click", ()=> startRecommended());
+$("verifyBtn").addEventListener("click", ()=> startVerify());
+$("progressBtn").addEventListener("click", ()=> showProgress());
+$("progressHomeBtn").addEventListener("click", ()=> goHome());
+$("resetBtn").addEventListener("click", ()=> resetAll());
+
+$("backHomeBtn").addEventListener("click", ()=> goHome());
+$("nextBtn").addEventListener("click", ()=>{
+  if(guidedState){
+    guidedState.stepIndex++;
+    if(guidedState.stepIndex >= guidedState.q.steps.length){
+      // mark overall guided completion as 1 point
+      score += 1;
+      qIndex++;
+      renderQuestion();
+    } else {
+      renderGuidedStep();
+    }
     return;
   }
-  wrongLog.slice(0,50).forEach((w,idx)=>{
-    const div=document.createElement('div');
-    div.className='reviewItem';
-    const q = w.q;
-    div.innerHTML = `<div class="tag">Errore ${idx+1}</div><div><strong>Domanda:</strong> ${renderMathInline(q.q||'Esercizio guidato')}</div><div><strong>Tua risposta:</strong> ${renderMathInline(w.user||'')}</div><div class="muted" style="margin-top:6px">${renderMathInline((q.rule||'').split('\n')[0]||'')}</div>`;
-    box.appendChild(div);
-  });
-  box.classList.remove('hidden');
-}
+  qIndex++;
+  renderQuestion();
+});
 
-function reset(){
-  localStorage.removeItem(STORE_KEY);
-  profile = loadProfile();
-  updateUnlocks(profile);
-  saveProfile(profile);
-  renderHome();
-}
+$("checkOpenBtn").addEventListener("click", ()=>{
+  if(guidedState){
+    submitGuidedOpen();
+  } else {
+    submitOpen();
+  }
+});
 
-// events
-$('resetBtn').addEventListener('click', reset);
-$('backHomeBtn').addEventListener('click', ()=>{showSection('home'); renderHome();});
-$('resultHomeBtn').addEventListener('click', ()=>{showSection('home'); renderHome();});
-$('skipBtn').addEventListener('click', next);
-$('nextBtn').addEventListener('click', ()=>{ if(!guidedRoot && quizList[qi].type==='open'){} next(); });
-$('checkBtn').addEventListener('click', checkOpen);
-$('answer').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); checkOpen(); }});
-$('reviewBtn').addEventListener('click', showReview);
+$("openInput").addEventListener("keydown", (e)=>{
+  if(e.key==="Enter"){
+    e.preventDefault();
+    $("checkOpenBtn").click();
+  }
+});
 
-// register service worker
-if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=> navigator.serviceWorker.register('./sw.js').catch(()=>{}));
-}
+/* -------------------- Boot -------------------- */
+(function init(){
+  // onboarding
+  const n = localStorage.getItem(LS.name);
+  if(n){
+    hide("onboarding");
+    show("home");
+    setSafeName();
+    goHome();
+  } else {
+    show("onboarding");
+    hide("home");
+  }
 
-// initial render
-renderHome();
-showSection('home');
+  // PWA SW register (if file exists later)
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("./sw.js").catch(()=>{});
+  }
+})();
