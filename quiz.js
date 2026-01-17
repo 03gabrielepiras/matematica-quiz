@@ -13,6 +13,55 @@
    ========================================================= */
 
 "use strict";
+const SKILL_LABELS = {
+  // P0
+  "P0_C1":"Confrontare frazioni (prodotto incrociato)",
+  "P0_C2":"Riconoscere una proporzione",
+  "P0_C3":"Distinguere medi ed estremi",
+  "P0_C4":"Trovare x in proporzione semplice",
+  "P0_C5":"Trovare x con espressioni (x−2, ecc.)",
+  "P0_C6":"Controllare il risultato della proporzione",
+
+  // M1
+  "M1_C1":"Riconoscere un monomio",
+  "M1_C2":"Trovare il coefficiente",
+  "M1_C3":"Individuare la parte letterale",
+  "M1_C4":"Calcolare il grado totale",
+  "M1_C5":"Grado rispetto a una lettera",
+
+  // M2
+  "M2_C6":"Prodotto tra monomi",
+  "M2_C7":"Divisione tra monomi",
+  "M2_C8":"Potenza di un monomio",
+  "M2_C9":"Gestire i segni",
+  "M2_C10":"Scegliere la regola corretta (prodotto/divisione/potenza)",
+
+  // M3
+  "M3_C11":"Riconoscere un polinomio",
+  "M3_C12":"Numero di termini (mono/bi/tri)",
+  "M3_C13":"Riconoscere termini simili",
+  "M3_C14":"Ridurre un polinomio",
+  "M3_C15":"Grado di un polinomio",
+
+  // M4
+  "M4_C16":"Somma di polinomi",
+  "M4_C17":"Differenza di polinomi (cambio segni)",
+  "M4_C18":"Distributiva (monomio × polinomio)",
+  "M4_C19":"Binomio × binomio",
+  "M4_C20":"Ordine dei passaggi (procedura corretta)",
+
+  // M5
+  "M5_C21":"Distinguere MCD e MCM",
+  "M5_C22":"MCD/MCM dei coefficienti",
+  "M5_C23":"Lettere comuni / tutte le lettere",
+  "M5_C24":"Min/Max degli esponenti",
+  "M5_C25":"Procedura completa e ordinata"
+};
+
+function labelSkill(id){
+  return SKILL_LABELS[id] || id;
+}
+
 
 /* -------------------- Helpers DOM -------------------- */
 const $ = (id) => document.getElementById(id);
