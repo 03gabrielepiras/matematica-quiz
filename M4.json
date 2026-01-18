@@ -1,0 +1,164 @@
+{
+  "schema": 1,
+  "block": "M4",
+  "questions": [
+    {
+      "type": "open",
+      "block": "M4",
+      "skill": "M4_C16",
+      "prompt": "Somma: (2x+3) + (x+1)",
+      "rule": "Somma: togli parentesi e riduci termini simili.",
+      "example": "2x+3+x+1=3x+4",
+      "checkerType": "poly",
+      "expected": "3x+4",
+      "id": "M4_001"
+    },
+    {
+      "type": "open",
+      "block": "M4",
+      "skill": "M4_C17",
+      "prompt": "Differenza: (3x+2) - (x+1)",
+      "rule": "Nella differenza cambi segno a TUTTI i termini del secondo polinomio.",
+      "example": "3x+2-x-1=2x+1",
+      "checkerType": "poly",
+      "expected": "2x+1",
+      "id": "M4_002"
+    },
+    {
+      "type": "guided",
+      "block": "M4",
+      "skills": [
+        "M4_C18",
+        "M4_C20"
+      ],
+      "title": "Svolgi: 2x(3x+1)",
+      "rule": "Distributiva: moltiplica il monomio per OGNI termine del polinomio, poi riduci.",
+      "example": "2x·3x=6x² e 2x·1=2x → 6x²+2x",
+      "steps": [
+        {
+          "type": "mcq",
+          "block": "M4",
+          "skill": "M4_C20",
+          "prompt": "Primo passo corretto?",
+          "choices": [
+            "Moltiplico 2x solo per 3x",
+            "Moltiplico 2x per tutti i termini (3x e 1)",
+            "Sommo 2x+3x"
+          ],
+          "answerIndex": 1,
+          "rule": "Prima distribuisci su tutti i termini.",
+          "example": "2x(3x+1)=2x·3x + 2x·1"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C18",
+          "prompt": "Calcola il primo prodotto: 2x·3x =",
+          "rule": "Moltiplica coefficienti e somma esponenti: x·x=x².",
+          "example": "2·3=6 e x·x=x² → 6x²",
+          "checkerType": "poly",
+          "expected": "6x^2"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C18",
+          "prompt": "Calcola il secondo prodotto: 2x·1 =",
+          "rule": "Moltiplicare per 1 lascia invariato.",
+          "example": "2x·1=2x",
+          "checkerType": "poly",
+          "expected": "2x"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C20",
+          "prompt": "Scrivi il risultato finale:",
+          "rule": "Somma i prodotti ottenuti.",
+          "example": "6x²+2x",
+          "checkerType": "poly",
+          "expected": "6x^2+2x"
+        }
+      ],
+      "id": "M4_003"
+    },
+    {
+      "type": "guided",
+      "block": "M4",
+      "skills": [
+        "M4_C19",
+        "M4_C20"
+      ],
+      "title": "Svolgi: (x+2)(x+3)",
+      "rule": "Binomio×binomio: fai 4 prodotti (ogni termine con ogni termine), poi riduci.",
+      "example": "x·x=x², x·3=3x, 2·x=2x, 2·3=6 → x²+5x+6",
+      "steps": [
+        {
+          "type": "mcq",
+          "block": "M4",
+          "skill": "M4_C20",
+          "prompt": "Quanti prodotti devi fare?",
+          "choices": [
+            "2",
+            "3",
+            "4"
+          ],
+          "answerIndex": 2,
+          "rule": "Binomio×binomio → 4 prodotti.",
+          "example": "(a+b)(c+d) = ac+ad+bc+bd"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C19",
+          "prompt": "Prodotto 1: x·x =",
+          "rule": "x·x = x².",
+          "example": "x^2",
+          "checkerType": "poly",
+          "expected": "x^2"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C19",
+          "prompt": "Prodotto 2: x·3 =",
+          "rule": "Moltiplica il coefficiente: 1·3=3.",
+          "example": "3x",
+          "checkerType": "poly",
+          "expected": "3x"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C19",
+          "prompt": "Prodotto 3: 2·x =",
+          "rule": "2·x=2x.",
+          "example": "2x",
+          "checkerType": "poly",
+          "expected": "2x"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C19",
+          "prompt": "Prodotto 4: 2·3 =",
+          "rule": "2·3=6.",
+          "example": "6",
+          "checkerType": "poly",
+          "expected": "6"
+        },
+        {
+          "type": "open",
+          "block": "M4",
+          "skill": "M4_C20",
+          "prompt": "Somma e riduci i 4 prodotti (risultato finale):",
+          "rule": "Somma: x² + (3x+2x) + 6.",
+          "example": "x^2+5x+6",
+          "checkerType": "poly",
+          "expected": "x^2+5x+6"
+        }
+      ],
+      "id": "M4_004"
+    }
+  ]
+}
