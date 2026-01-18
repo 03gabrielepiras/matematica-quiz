@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+
+  <!-- iOS/Android PWA: NO zoom accidentale -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+  <meta name="theme-color" content="#0b0f17" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+
+  <title>π 1GL1-GL2 • Matematica</title>
+</head>
+
+<body>
+  <!-- Header identità -->
+  <header class="topbar">
+    <div class="wrap topbar__inner">
+      <div class="brand">
+        <div class="brand__icon" aria-hidden="true">π</div>
+        <div class="brand__text">
+          <div class="brand__school">1GL1-GL2 – Matematica – Algebra</div>
+          <div class="brand__title">Prof. G. Gentili</div>
+        </div>
+      </div>
+
+      <div class="topbar__right">
+        <div id="hello" class="pill hidden"></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- ONBOARDING NOME (solo prima volta) -->
+    <section class="card" id="onboarding">
+      <h2>Chi sei?</h2>
+      <p class="muted">Scrivi il tuo nome (rimane salvato nella PWA).</p>
+
+      <div class="grid one">
+        <label class="field">
+          <span>Nome</span>
+          <input id="nameInput"
+                 type="text"
+                 placeholder="Es. Gabriele"
+                 autocomplete="off"
+                 autocorrect="off"
+                 autocapitalize="off"
+                 spellcheck="false" />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="saveNameBtn" class="btn primary">Continua</button>
+      </div>
+    </section>
+
+    <!-- HOME -->
+    <section class="card hidden" id="home">
+      <div class="homeHead">
+        <div>
+          <h2>Allenamento e Verifiche</h2>
+          <p class="muted">Percorso guidato con prerequisiti (P0 → M1 → M2 → M3 → M4 → M5).</p>
+        </div>
+        <div class="pill" id="statusPill">Stato: —</div>
+      </div>
+
+      <!-- progressi sintetici + badge (riempiti da quiz.js) -->
+      <div id="dashboard" class="dashboard"></div>
+
+      <div class="divider"></div>
+
+      <h3>Classe</h3>
+      <p class="muted tiny">Vedi chi sta usando l’app in classe e a che percentuale è arrivato (serve connessione).</p>
+      <div id="classmates" class="classmates"></div>
+
+      <div class="actions">
+        <button id="trainBtn" class="btn primary">Allenati (consigliato)</button>
+        <button id="verifyBtn" class="btn">Verifica</button>
+        <button id="progressBtn" class="btn">Progressi</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- selezione blocco (se consentita) -->
+      <h3>Blocchi</h3>
+      <div id="blocks" class="blocks"></div>
+
+      <p class="muted tiny" id="homeHint"></p>
+    </section>
+
+    <!-- QUIZ -->
+    <section class="card hidden" id="quiz">
+      <div class="quizHead">
+        <div>
+          <h2 id="quizTitle">Domanda</h2>
+          <p class="muted" id="meta"></p>
+        </div>
+        <div class="pill" id="scorePill">Punti: 0</div>
+      </div>
+
+      <div class="progress">
+        <div class="progress__bar" id="progressBar"></div>
+      </div>
+
+      <!-- Post-it regola + esempio (sempre in Allenamento) -->
+      <div class="note" id="ruleNote">
+        <div class="note__title">Regola + esempio</div>
+        <div class="note__body" id="ruleText">—</div>
+      </div>
+
+      <div class="qbox">
+        <div class="qtext" id="qtext">…</div>
+
+        <!-- area risposte (MCQ / step guidati / open) -->
+        <div id="choices" class="choices"></div>
+
+        <div id="openWrap" class="hidden">
+          <label class="field">
+            <span class="muted">Risposta</span>
+            <input id="openInput"
+                   type="text"
+                   inputmode="decimal"
+                   placeholder="Scrivi qui…"
+                   autocomplete="off"
+                   autocorrect="off"
+                   autocapitalize="off"
+                   spellcheck="false" />
+          </label>
+
+          <div class="keypad" id="keypad"></div>
+
+          <div class="actions">
+            <button id="checkOpenBtn" class="btn primary">Conferma</button>
+          </div>
+        </div>
+
+        <div class="feedback" id="feedback"></div>
+      </div>
+
+      <div class="actions">
+        <button id="backHomeBtn" class="btn">Home</button>
+        <button id="nextBtn" class="btn primary" disabled>Avanti</button>
+      </div>
+    </section>
+
+    <!-- PROGRESSI DETTAGLIATI -->
+    <section class="card hidden" id="progressView">
+      <h2>Progressi</h2>
+      <p class="muted">Qui vedi punti forti e carenze per competenza.</p>
+
+      <div id="progressBody" class="progressBody"></div>
+
+      <div class="actions">
+        <button id="progressHomeBtn" class="btn primary">Torna alla Home</button>
+        <button id="resetBtn" class="btn danger">Reset progressi</button>
+      </div>
+    </section>
+
+    <!-- TOAST -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <footer class="footer muted">
+      <p class="tiny">PWA • Offline • Nessun suggerimento tastiera • No zoom</p>
+    </footer>
+  </main>
+
+  <script type="module">
+    // Firebase (Auth anonimo + Firestore)
+    // Se Firebase non parte, l'app resta utilizzabile offline (solo senza lista classe).
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { getFirestore } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCFA9VgscJaUBdkwELaGRhM7z8-KUePRuc",
+      authDomain: "matematica-953a8.firebaseapp.com",
+      projectId: "matematica-953a8",
+      storageBucket: "matematica-953a8.firebasestorage.app",
+      messagingSenderId: "84797551464",
+      appId: "1:84797551464:web:a5692f8080189a69a6dcdd",
+      measurementId: "G-C5M1F3YG6T"
+    };
+
+    try {
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db = getFirestore(app);
+      window.__FIREBASE__ = { auth, db, signInAnonymously };
+    } catch (e) {
+      console.warn("Firebase non configurato:", e);
+    }
+    // IMPORTANTE: carichiamo quiz.js DOPO aver inizializzato Firebase
+  // (altrimenti quiz.js vede window.__FIREBASE__ vuoto e stampa "Firebase non configurato").
+  await import("./quiz.js");
+  </script>
+</body>
+</html>
