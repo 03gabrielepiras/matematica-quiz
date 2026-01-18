@@ -1,95 +1,89 @@
-const CACHE_NAME = "math-algebra-pwa-v28";
+// ===============================
+// Service Worker – Matematica Quiz
+// Versione: v29-3
+// ===============================
 
-// iOS a volte e' molto severo: se una risorsa in addAll fallisce, l'install fallisce.
-// Qui costruiamo URL assoluti in base allo scope dello SW.
-const CORE_PATHS = [
-  "index.html",
-  "styles.css",
-  "quiz.js",
-  "manifest.webmanifest"
+const CACHE_VERSION = 'v29-3';
+const CACHE_NAME = `matematica-quiz-cache-${CACHE_VERSION}`;
+
+// File essenziali (aggiungine solo se servono davvero)
+const CORE_ASSETS = [
+  './',
+  './index.html',
+  './style.css',
+  './quiz.js',
+  './manifest.json',
+
+  // dati quiz
+  './data/P0.json',
+  './data/M1.json',
+  './data/M2.json',
+  './data/M3.json',
+  './data/M4.json',
+  './data/M5.json'
 ];
 
-const OPTIONAL_ASSETS = [
-  "./data/P0.json",
-  "./data/M1.json",
-  "./data/M2.json",
-  "./data/M3.json",
-  "./data/M4.json",
-  "./data/M5.json"
-];
+// ===============================
+// INSTALL
+// ===============================
+self.addEventListener('install', (event) => {
+  console.log('[SW] Install', CACHE_VERSION);
+  self.skipWaiting();
 
-self.addEventListener("install", (event) => {
-  // Non forziamo l'update: lo SW resta in waiting finche' l'utente non preme "Aggiorna".
-  event.waitUntil((async () => {
-    const cache = await caches.open(CACHE_NAME);
-
-    // 1) cache core (senza addAll unico, cosi' non si blocca se una fetch e' lenta)
-    const scope = self.registration.scope;
-    for (const p of CORE_PATHS) {
-      const url = new URL(p, scope).toString();
-      try { await cache.add(url); } catch (_) { /* ignora: verra' preso online */ }
-    }
-
-    // 2) cache opzionali: non deve mai bloccare l'install
-    await Promise.all(OPTIONAL_ASSETS.map(async (u) => {
-      try {
-        const url = new URL(u, scope).toString();
-        const res = await fetch(url, { cache: "no-cache" });
-        if(res && res.ok) await cache.put(url, res);
-      } catch (_) {
-        // ignora
-      }
-    }));
-  })());
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(CORE_ASSETS);
+    })
+  );
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil((async () => {
-    const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)));
-    await self.clients.claim();
-  })());
+// ===============================
+// ACTIVATE
+// ===============================
+self.addEventListener('activate', (event) => {
+  console.log('[SW] Activate', CACHE_VERSION);
+
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key.startsWith('matematica-quiz-cache-') && key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    ).then(() => self.clients.claim())
+  );
 });
 
-self.addEventListener("message", (event) => {
-  const data = event.data || {};
-  if (data && data.type === "SKIP_WAITING") self.skipWaiting();
-});
-
-self.addEventListener("fetch", (event) => {
+// ===============================
+// FETCH
+// ===============================
+self.addEventListener('fetch', (event) => {
   const req = event.request;
-  const url = new URL(req.url);
 
-  // Solo same-origin
-  if (url.origin !== self.location.origin) return;
+  // ❌ Non cache Firebase / API / roba dinamica
+  if (req.url.includes('firebase') || req.url.includes('googleapis')) {
+    return;
+  }
 
-  const isNav = req.mode === "navigate" || (req.destination === "document");
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
 
-  event.respondWith((async () => {
-    const cache = await caches.open(CACHE_NAME);
-
-    // Navigazione: index.html come fallback
-    if (isNav) {
-      try {
-        const fresh = await fetch(req);
-        cache.put(req, fresh.clone());
-        return fresh;
-      } catch (_) {
-        const fallback = await cache.match(new URL("index.html", self.registration.scope).toString());
-        return fallback || Response.error();
-      }
-    }
-
-    // Asset (js/css/json...): cache-first, fallback SOLO se esiste, mai index.html
-    const cached = await cache.match(req);
-    if (cached) return cached;
-
-    try {
-      const fresh = await fetch(req);
-      cache.put(req, fresh.clone());
-      return fresh;
-    } catch (_) {
-      return Response.error();
-    }
-  })());
+      return fetch(req)
+        .then((res) => {
+          // Cache solo GET validi
+          if (req.method === 'GET' && res.status === 200) {
+            const resClone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone));
+          }
+          return res;
+        })
+        .catch(() => {
+          // fallback minimale offline
+          if (req.destination === 'document') {
+            return caches.match('./index.html');
+          }
+        });
+    })
+  );
 });
