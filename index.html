@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Quiz Geografia v17</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <div id="app">
+    <h1>Geografia</h1>
+
+    <div id="nameBox">
+      <input id="nameInput" placeholder="Inserisci il tuo nome"/>
+      <button onclick="startApp()">Entra</button>
+    </div>
+
+    <div id="menu" class="hidden">
+      <p id="welcome"></p>
+      <button onclick="startMode('train')">Allenamento</button>
+      <button onclick="startMode('test')">Verifica</button>
+    </div>
+
+    <div id="quiz" class="hidden">
+      <h2 id="question"></h2>
+      <div id="answers"></div>
+      <p id="explanation"></p>
+      <button onclick="next()">Avanti</button>
+    </div>
+  </div>
+
+  <script src="questions.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
